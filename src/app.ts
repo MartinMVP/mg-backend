@@ -9,6 +9,7 @@ import path from 'path';
 import { env } from './config/env';
 import healthRouter from './http/routes/health';
 import authRouter from './http/routes/auth';
+import adminRouter from './http/routes/admin'; // <- añadido
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.use(morgan('dev'));
 // Rutas base
 app.use('/health', healthRouter);
 app.use('/auth', authRouter);
+app.use('/admin', adminRouter); // <- añadido
 
 // ---------- Swagger (/docs) ----------
 import swaggerUi from 'swagger-ui-express';
