@@ -1,8 +1,31 @@
+// src/config/security.ts
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { env } from './env';
 
 export function securityMiddleware(app: any) {
+  // --- CORS manual, siempre 1 solo origen ---
+  const allowlist = env.corsOrigin; // p.ej: ['https://mg-frontend.onrender.com','http://localhost:5173']
+
+  app.use((req, res, next) => {
+    const origin = req.headers.origin as string | undefined;
+
+    // borra cualquier valor previo
+    res.removeHeader('Access-Control-Allow-Origin');
+
+    if (origin && allowlist.some(o => origin.startsWith(o))) {
+      // reflejamos SOLO el origin que viene (string, nunca lista)
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-csrf');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    }
+
+    if (req.method === 'OPTIONS') return res.status(204).end();
+    next();
+  });
+
   // Helmet (CSP + HSTS)
   app.use(helmet({
     contentSecurityPolicy: {
@@ -19,30 +42,4 @@ export function securityMiddleware(app: any) {
   }));
 
   app.use(cookieParser());
-
-  // --- CORS manual, a prueba de errores de encabezado ---
-  const allowlist = env.corsOrigin; // p.ej: ['https://mg-frontend.onrender.com','http://localhost:5173']
-
-  app.use((req, res, next) => {
-    const origin = req.headers.origin as string | undefined;
-
-    // Quitamos cualquier valor previo por si algo lo setea antes
-    res.removeHeader('Access-Control-Allow-Origin');
-
-    if (origin && allowlist.some(o => origin.startsWith(o))) {
-      // Reflejamos SOLO el origen que llegó (un string válido, nunca lista)
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-csrf');
-      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    }
-
-    // Respuesta inmediata para preflight
-    if (req.method === 'OPTIONS') {
-      return res.status(204).end();
-    }
-
-    next();
-  });
 }
