@@ -8,7 +8,6 @@ async function bootstrap() {
     console.log(`🚀 Server listo en http://localhost:${env.port}`);
   });
 }
-
 bootstrap().catch((err) => {
   console.error('Error al iniciar:', err);
   process.exit(1);
