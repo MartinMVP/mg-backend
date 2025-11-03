@@ -1,20 +1,19 @@
-// src/config/security.ts
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { env } from './env';
 
 export function securityMiddleware(app: any) {
-  // --- CORS manual, siempre 1 solo origen ---
-  const allowlist = env.corsOrigin; // p.ej: ['https://mg-frontend.onrender.com','http://localhost:5173']
+  const allowlist = env.corsOrigin; // ['https://mg-frontend.onrender.com','http://localhost:5173']
 
+  // CORS MANUAL: siempre 1 valor de ACAO
   app.use((req, res, next) => {
     const origin = req.headers.origin as string | undefined;
 
-    // borra cualquier valor previo
+    // Elimina si alguien lo puso antes
     res.removeHeader('Access-Control-Allow-Origin');
 
     if (origin && allowlist.some(o => origin.startsWith(o))) {
-      // reflejamos SOLO el origin que viene (string, nunca lista)
+      // Devolvemos SOLO el origin que vino en la request
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
       res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -26,7 +25,7 @@ export function securityMiddleware(app: any) {
     next();
   });
 
-  // Helmet (CSP + HSTS)
+  // Seguridad adicional
   app.use(helmet({
     contentSecurityPolicy: {
       useDefaults: true,
