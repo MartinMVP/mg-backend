@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import * as bcrypt from 'bcryptjs';
 import jwt, { Secret, SignOptions } from 'jsonwebtoken';
-import ms from 'ms';
+import ms, { StringValue as MsStringValue } from 'ms';
 import { randomUUID } from 'crypto';
 
 import { env } from '../../config/env';
@@ -14,23 +14,25 @@ import { generateCsrfToken } from '../middlewares/csrf';
 type AccessPayload = { sub: string; role: string; typ: 'access' };
 type RefreshPayload = { sub: string; role: string; typ: 'refresh'; jti: string };
 
-// helpers de firmado (nota: env.jwtAccessSecret / env.jwtRefreshSecret vienen de env.ts)
+// helpers de firmado
 function signAccess(sub: string, role: string) {
   const payload: AccessPayload = { sub, role, typ: 'access' };
   const secret: Secret = env.jwtAccessSecret;
-  const opts: SignOptions = { expiresIn: env.accessTtl };
+  // jwt acepta string estilo "15m"; lo casteamos a MsStringValue para satisfacer TS
+  const opts: SignOptions = { expiresIn: env.accessTtl as MsStringValue };
   return jwt.sign(payload, secret, opts);
 }
 
 function signRefresh(sub: string, role: string, jti: string) {
   const payload: RefreshPayload = { sub, role, typ: 'refresh', jti };
   const secret: Secret = env.jwtRefreshSecret;
-  const opts: SignOptions = { expiresIn: env.refreshTtl };
+  const opts: SignOptions = { expiresIn: env.refreshTtl as MsStringValue };
   return jwt.sign(payload, secret, opts);
 }
 
 function setRefreshCookie(res: Response, token: string) {
-  const ttlMs = ms(env.refreshTtl); // "7d" -> number
+  // Para cookies necesitamos milisegundos:
+  const ttlMs = ms(env.refreshTtl as MsStringValue);
   res.cookie('mg_refresh', token, {
     httpOnly: true,
     secure: env.cookieSecure,
@@ -40,7 +42,7 @@ function setRefreshCookie(res: Response, token: string) {
 }
 
 function setCsrfCookie(res: Response, token: string) {
-  const ttlMs = ms(env.refreshTtl);
+  const ttlMs = ms(env.refreshTtl as MsStringValue);
   res.cookie('mg_csrf', token, {
     httpOnly: false,
     secure: env.cookieSecure,
@@ -56,7 +58,12 @@ export async function register(req: Request, res: Response) {
 
   const hash = await bcrypt.hash(password, 12);
   const user = await User.create({ email, password: hash, name, role: 'user' });
-  await Audit.create({ actor: String(user._id), action: 'REGISTER', ip: req.ip, userAgent: req.headers['user-agent'] as string });
+  await Audit.create({
+    actor: String(user._id),
+    action: 'REGISTER',
+    ip: req.ip,
+    userAgent: req.headers['user-agent'] as string,
+  });
 
   res.status(201).json({ id: user._id, email: user.email, name: user.name });
 }
@@ -76,9 +83,21 @@ export async function login(req: Request, res: Response) {
   setCsrfCookie(res, generateCsrfToken());
 
   const tokenHash = await bcrypt.hash(refresh, 10);
-  const exp = new Date(Date.now() + ms(env.refreshTtl));
-  await Session.create({ user: user._id, jti, tokenHash, ip: req.ip, userAgent: req.headers['user-agent'] as string, expiresAt: exp });
-  await Audit.create({ actor: String(user._id), action: 'LOGIN', ip: req.ip, userAgent: req.headers['user-agent'] as string });
+  const exp = new Date(Date.now() + ms(env.refreshTtl as MsStringValue));
+  await Session.create({
+    user: user._id,
+    jti,
+    tokenHash,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'] as string,
+    expiresAt: exp,
+  });
+  await Audit.create({
+    actor: String(user._id),
+    action: 'LOGIN',
+    ip: req.ip,
+    userAgent: req.headers['user-agent'] as string,
+  });
 
   res.json({ access });
 }
@@ -108,9 +127,21 @@ export async function refresh(req: Request, res: Response) {
     setCsrfCookie(res, generateCsrfToken());
 
     const tokenHash = await bcrypt.hash(nextRefresh, 10);
-    const exp = new Date(Date.now() + ms(env.refreshTtl));
-    await Session.create({ user: payload.sub, jti: nextJti, tokenHash, ip: req.ip, userAgent: req.headers['user-agent'] as string, expiresAt: exp });
-    await Audit.create({ actor: String(payload.sub), action: 'REFRESH', ip: req.ip, userAgent: req.headers['user-agent'] as string });
+    const exp = new Date(Date.now() + ms(env.refreshTtl as MsStringValue));
+    await Session.create({
+      user: payload.sub,
+      jti: nextJti,
+      tokenHash,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] as string,
+      expiresAt: exp,
+    });
+    await Audit.create({
+      actor: String(payload.sub),
+      action: 'REFRESH',
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] as string,
+    });
 
     res.json({ access });
   } catch {
@@ -123,7 +154,12 @@ export async function logout(req: Request, res: Response) {
   await Session.updateMany({ user: user.sub, isRevoked: false }, { isRevoked: true });
   res.clearCookie('mg_refresh');
   res.clearCookie('mg_csrf');
-  await Audit.create({ actor: String(user.sub), action: 'LOGOUT', ip: req.ip, userAgent: req.headers['user-agent'] as string });
+  await Audit.create({
+    actor: String(user.sub),
+    action: 'LOGOUT',
+    ip: req.ip,
+    userAgent: req.headers['user-agent'] as string,
+  });
   res.json({ ok: true });
 }
 
