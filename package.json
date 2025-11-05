@@ -3,8 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "build": "tsc && cp src/docs/openapi.yaml dist/docs/openapi.yaml",
-    "start": "node dist/server.js",
+    "build": "tsc && node scripts/copy-swagger.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts"
   },
   "keywords": [],
