@@ -1,4 +1,3 @@
-// src/config/security.ts
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { env } from './env';
@@ -11,8 +10,7 @@ export function securityMiddleware(app: any) {
   app.use((req: Request, res: Response, next: NextFunction) => {
     const origin = req.headers.origin as string | undefined;
 
-    // Por si alguien lo puso antes
-    res.removeHeader('Access-Control-Allow-Origin');
+    res.removeHeader('Access-Control-Allow-Origin'); // por si alguien lo puso antes
 
     if (origin && allowlist.some(o => origin.startsWith(o))) {
       res.setHeader('Access-Control-Allow-Origin', origin);
@@ -21,12 +19,10 @@ export function securityMiddleware(app: any) {
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-csrf');
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
     }
-
     if (req.method === 'OPTIONS') return res.status(204).end();
     next();
   });
 
-  // Seguridad extra
   app.use(helmet({
     contentSecurityPolicy: {
       useDefaults: true,

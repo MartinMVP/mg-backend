@@ -1,7 +1,6 @@
-// src/http/controllers/auth.controller.ts
 import { Request, Response } from 'express';
 import * as bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import jwt, { Secret, SignOptions } from 'jsonwebtoken';
 import ms from 'ms';
 import { randomUUID } from 'crypto';
 
@@ -11,24 +10,27 @@ import { Session } from '../../domain/sessions/session.model';
 import { Audit } from '../../domain/audit/audit.model';
 import { generateCsrfToken } from '../middlewares/csrf';
 
+// payloads
 type AccessPayload = { sub: string; role: string; typ: 'access' };
 type RefreshPayload = { sub: string; role: string; typ: 'refresh'; jti: string };
 
+// helpers de firmado (nota: env.jwtAccessSecret / env.jwtRefreshSecret vienen de env.ts)
 function signAccess(sub: string, role: string) {
-  // Usa env.jwtAccessSecret y env.accessTtl (string tipo "15m")
-  return jwt.sign({ sub, role, typ: 'access' } as AccessPayload, env.jwtAccessSecret, {
-    expiresIn: env.accessTtl,
-  });
+  const payload: AccessPayload = { sub, role, typ: 'access' };
+  const secret: Secret = env.jwtAccessSecret;
+  const opts: SignOptions = { expiresIn: env.accessTtl };
+  return jwt.sign(payload, secret, opts);
 }
 
 function signRefresh(sub: string, role: string, jti: string) {
-  return jwt.sign({ sub, role, typ: 'refresh', jti } as RefreshPayload, env.jwtRefreshSecret, {
-    expiresIn: env.refreshTtl,
-  });
+  const payload: RefreshPayload = { sub, role, typ: 'refresh', jti };
+  const secret: Secret = env.jwtRefreshSecret;
+  const opts: SignOptions = { expiresIn: env.refreshTtl };
+  return jwt.sign(payload, secret, opts);
 }
 
 function setRefreshCookie(res: Response, token: string) {
-  const ttlMs = ms(env.refreshTtl); // "7d" -> número (ms)
+  const ttlMs = ms(env.refreshTtl); // "7d" -> number
   res.cookie('mg_refresh', token, {
     httpOnly: true,
     secure: env.cookieSecure,
@@ -47,21 +49,20 @@ function setCsrfCookie(res: Response, token: string) {
   });
 }
 
-// ---------- handlers ----------
 export async function register(req: Request, res: Response) {
-  const { email, password, name } = req.body || {};
+  const { email, password, name } = req.body ?? {};
   const exists = await User.findOne({ email });
   if (exists) return res.status(409).json({ error: 'Email already registered' });
 
   const hash = await bcrypt.hash(password, 12);
   const user = await User.create({ email, password: hash, name, role: 'user' });
-  await Audit.create({ actor: String(user._id), action: 'REGISTER', ip: req.ip, userAgent: req.headers['user-agent'] });
+  await Audit.create({ actor: String(user._id), action: 'REGISTER', ip: req.ip, userAgent: req.headers['user-agent'] as string });
 
   res.status(201).json({ id: user._id, email: user.email, name: user.name });
 }
 
 export async function login(req: Request, res: Response) {
-  const { email, password } = req.body || {};
+  const { email, password } = req.body ?? {};
   const user = await User.findOne({ email, isActive: true });
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
@@ -76,8 +77,8 @@ export async function login(req: Request, res: Response) {
 
   const tokenHash = await bcrypt.hash(refresh, 10);
   const exp = new Date(Date.now() + ms(env.refreshTtl));
-  await Session.create({ user: user._id, jti, tokenHash, ip: req.ip, userAgent: req.headers['user-agent'], expiresAt: exp });
-  await Audit.create({ actor: String(user._id), action: 'LOGIN', ip: req.ip, userAgent: req.headers['user-agent'] });
+  await Session.create({ user: user._id, jti, tokenHash, ip: req.ip, userAgent: req.headers['user-agent'] as string, expiresAt: exp });
+  await Audit.create({ actor: String(user._id), action: 'LOGIN', ip: req.ip, userAgent: req.headers['user-agent'] as string });
 
   res.json({ access });
 }
@@ -92,10 +93,11 @@ export async function refresh(req: Request, res: Response) {
 
     const session = await Session.findOne({ user: payload.sub, jti: payload.jti, isRevoked: false });
     if (!session) return res.status(401).json({ error: 'Session not found' });
+
     const match = await bcrypt.compare(token, session.tokenHash);
     if (!match) return res.status(401).json({ error: 'Invalid session' });
 
-    // Rotación: revoca actual y crea nueva
+    // rotación
     session.isRevoked = true;
     await session.save();
 
@@ -107,8 +109,8 @@ export async function refresh(req: Request, res: Response) {
 
     const tokenHash = await bcrypt.hash(nextRefresh, 10);
     const exp = new Date(Date.now() + ms(env.refreshTtl));
-    await Session.create({ user: payload.sub, jti: nextJti, tokenHash, ip: req.ip, userAgent: req.headers['user-agent'], expiresAt: exp });
-    await Audit.create({ actor: String(payload.sub), action: 'REFRESH', ip: req.ip, userAgent: req.headers['user-agent'] });
+    await Session.create({ user: payload.sub, jti: nextJti, tokenHash, ip: req.ip, userAgent: req.headers['user-agent'] as string, expiresAt: exp });
+    await Audit.create({ actor: String(payload.sub), action: 'REFRESH', ip: req.ip, userAgent: req.headers['user-agent'] as string });
 
     res.json({ access });
   } catch {
@@ -117,11 +119,11 @@ export async function refresh(req: Request, res: Response) {
 }
 
 export async function logout(req: Request, res: Response) {
-  const user = (req as any).user; // viene del middleware requireAuth
+  const user = (req as any).user;
   await Session.updateMany({ user: user.sub, isRevoked: false }, { isRevoked: true });
   res.clearCookie('mg_refresh');
   res.clearCookie('mg_csrf');
-  await Audit.create({ actor: String(user.sub), action: 'LOGOUT', ip: req.ip, userAgent: req.headers['user-agent'] });
+  await Audit.create({ actor: String(user.sub), action: 'LOGOUT', ip: req.ip, userAgent: req.headers['user-agent'] as string });
   res.json({ ok: true });
 }
 
