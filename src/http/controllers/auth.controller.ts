@@ -3,7 +3,6 @@ import * as bcrypt from 'bcryptjs';
 import jwt, { Secret, SignOptions } from 'jsonwebtoken';
 import ms, { StringValue as MsStringValue } from 'ms';
 import { randomUUID } from 'crypto';
-import mongoose from 'mongoose';
 
 import { env } from '../../config/env';
 import { User } from '../../domain/users/user.model';
@@ -75,7 +74,7 @@ export async function login(req: Request, res: Response) {
   const plain = String(req.body?.password || '');
   const email = rawEmail.toLowerCase().trim();
 
-  // ⚠️ tu schema no tiene isActive
+  // tu schema no tiene isActive
   const user = await User.findOne({ email }).select('password role email name');
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
@@ -117,8 +116,9 @@ export async function refresh(req: Request, res: Response) {
 
   try {
     const payload = jwt.verify(token, env.jwtRefreshSecret) as RefreshPayload;
-    if (payload.typ !== 'refresh' || !payload.jti)
+    if (payload.typ !== 'refresh' || !payload.jti) {
       return res.status(401).json({ error: 'Invalid refresh' });
+    }
 
     const session = await Session.findOne({ user: payload.sub, jti: payload.jti, isRevoked: false });
     if (!session) return res.status(401).json({ error: 'Session not found' });
@@ -181,38 +181,4 @@ export async function me(req: Request, res: Response) {
   const user = (req as any).user;
   const doc = await User.findById(user.sub).select('email name role createdAt');
   res.json({ user: doc });
-}
-
-/**
- * Endpoint TEMPORAL de diagnóstico para Render.
- * GET /auth/_debug/login
- * Devuelve si la DB es la correcta y si el hash coincide con "Sup3rP4ss!".
- */
-export async function debugLogin(req: Request, res: Response) {
-  const email = 'super@mg.mx';
-  const plain = 'Sup3rP4ss!';
-
-  const dbName = mongoose.connection?.db?.databaseName;
-  const user = await User.findOne({ email }).lean();
-
-  let hasPassword = false;
-  let matches: boolean | null = null;
-
-  if (user?.password) {
-    hasPassword = true;
-    try {
-      matches = await bcrypt.compare(plain, user.password);
-    } catch {
-      matches = null;
-    }
-  }
-
-  res.json({
-    ok: true,
-    dbName,
-    found: !!user,
-    role: (user as any)?.role ?? null,
-    hasPassword,
-    matches,
-  });
 }
