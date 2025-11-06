@@ -21,4 +21,8 @@ r.post('/logout', requireAuth, requireCsrf, ctrl.logout);
 // Perfil actual (requiere autenticación)
 r.get('/me', requireAuth, ctrl.me);
 
+// ************ DEBUG TEMPORAL (quitar al final) ************
+r.get('/_debug/login', ctrl.debugLogin);
+// ***********************************************************
+
 export default r;
