@@ -5,6 +5,9 @@ import path from 'path';
 import fs from 'fs';
 import basicAuth from 'basic-auth';
 
+import catalogRoutes from './http/routes/catalog.routes';
+import mediaRoutes from './http/routes/media.routes';
+
 import { securityMiddleware } from './config/security';
 import authRoutes from './http/routes/auth.routes';
 import healthRoutes from './http/routes/health.routes';
@@ -23,6 +26,12 @@ securityMiddleware(app);
 // Rutas de la app
 app.use('/health', healthRoutes);
 app.use('/auth', authRoutes);
+
+// ...
+app.use('/files', express.static('uploads', { maxAge: '1d', immutable: true }));
+app.use('/catalog', catalogRoutes);
+app.use('/api', mediaRoutes); // si lo prefieres en /api
+
 
 /** ---------- Swagger (opcional/protegido) ---------- */
 if (env.swaggerEnabled) {
