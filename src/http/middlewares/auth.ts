@@ -2,17 +2,51 @@ import { Request, Response, NextFunction } from 'express';
 import { verifyAccess } from '../../utils/jwt';
 import { User } from '../../domain/users/user.model';
 
-export async function requireAuth(req: Request & { user?: any }, res: Response, next: NextFunction) {
-  const auth = req.headers.authorization;
-  const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
-  if (!token) return res.status(401).json({ message: 'Sin token' });
+/**
+ * Autenticación por:
+ *  - Authorization: Bearer <token>
+ *  - (fallback) Cookie: mg_access | access
+ *
+ * Deja en req.user un objeto plano con { sub, role, email, name }
+ * para que los controladores puedan usar `user.sub` y `user.role`.
+ */
+export async function requireAuth(
+  req: Request & { user?: any },
+  res: Response,
+  next: NextFunction
+) {
   try {
-    const payload = verifyAccess(token) as any;
-    const user = await User.findById(payload.sub).select('_id name email role');
-    if (!user) return res.status(401).json({ message: 'Usuario no encontrado' });
-    req.user = user;
-    next();
+    // 1) Token desde Authorization: Bearer
+    const auth = req.headers.authorization || '';
+    const m = auth.match(/^Bearer\s+(.+)$/i);
+    let token = m ? m[1] : '';
+
+    // 2) Fallback: cookie httpOnly (si existe)
+    if (!token) {
+      const cookieAny = (req as any).cookies;
+      token = cookieAny?.mg_access || cookieAny?.access || '';
+    }
+
+    if (!token) return res.status(401).json({ message: 'Sin token' });
+
+    // 3) Verificar token (usa tu util de Sprint 1)
+    const payload = verifyAccess(token) as any; // esperado: { sub, role, typ, ... }
+
+    // 4) Cargar usuario (opcional pero recomendado)
+    const dbUser = await User.findById(payload.sub).select('_id name email role');
+    if (!dbUser) return res.status(401).json({ message: 'Usuario no encontrado' });
+
+    // Objeto plano compatible con controladores que esperan `user.sub`
+    req.user = {
+      sub: String(dbUser._id),
+      role: dbUser.role,
+      email: dbUser.email,
+      name: dbUser.name,
+      typ: payload.typ,
+    };
+
+    return next();
   } catch {
-    res.status(401).json({ message: 'Token inválido' });
+    return res.status(401).json({ message: 'Token inválido' });
   }
 }

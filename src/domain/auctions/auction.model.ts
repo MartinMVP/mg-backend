@@ -7,22 +7,41 @@ export interface IAuction {
   state: AuctionState;
   startsAt: Date;
   endsAt: Date;
-  lots: Types.ObjectId[];      // ref -> Listing
-  createdBy?: Types.ObjectId;  // ref -> User (admin)
-  active: boolean;
+  listing: Types.ObjectId;          // MVP: 1 listing por subasta
+  startPrice: number;               // precio base
+  minIncrement: number;             // incremento mínimo
+  currentPrice: number;             // precio vigente
+  currentWinner?: Types.ObjectId;   // user id
+  antiSnipingSec: number;           // umbral para extender
+  antiSnipingExtendSec: number;     // extensión
+  antiSnipingMaxExt: number;        // máx extensiones
+  antiSnipingCount: number;         // extensiones aplicadas
 }
 
 const AuctionSchema = new Schema<IAuction>(
   {
     title: { type: String, required: true, trim: true },
-    state: { type: String, enum: ['scheduled', 'live', 'paused', 'closed'], index: true, default: 'scheduled' },
+    state: {
+      type: String,
+      enum: ['scheduled', 'live', 'paused', 'closed'],
+      index: true,
+      default: 'scheduled',
+    },
     startsAt: { type: Date, required: true },
     endsAt: { type: Date, required: true },
-    lots: [{ type: Schema.Types.ObjectId, ref: 'Listing' }],
-    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
-    active: { type: Boolean, default: true },
+    listing: { type: Schema.Types.ObjectId, ref: 'Listing', required: true, index: true },
+    startPrice: { type: Number, required: true, min: 0 },
+    minIncrement: { type: Number, required: true, min: 1 },
+    currentPrice: { type: Number, required: true, min: 0 },
+    currentWinner: { type: Schema.Types.ObjectId, ref: 'User' },
+    antiSnipingSec: { type: Number, default: 30 },
+    antiSnipingExtendSec: { type: Number, default: 20 },
+    antiSnipingMaxExt: { type: Number, default: 3 },
+    antiSnipingCount: { type: Number, default: 0 },
   },
-  { timestamps: true }
+  { timestamps: true, versionKey: 'v' }
 );
+
+AuctionSchema.index({ state: 1, endsAt: 1 });
 
 export const Auction = model<IAuction>('Auction', AuctionSchema);

@@ -9,12 +9,14 @@ export interface IBid {
 
 const BidSchema = new Schema<IBid>(
   {
-    auction: { type: Schema.Types.ObjectId, ref: 'Auction', index: true },
-    listing: { type: Schema.Types.ObjectId, ref: 'Listing', index: true },
-    bidder: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    auction: { type: Schema.Types.ObjectId, ref: 'Auction', index: true, required: true },
+    listing: { type: Schema.Types.ObjectId, ref: 'Listing', index: true, required: true },
+    bidder: { type: Schema.Types.ObjectId, ref: 'User', index: true, required: true },
     amount: { type: Number, required: true, min: 0 },
   },
   { timestamps: true }
 );
+
+BidSchema.index({ auction: 1, createdAt: -1 });
 
 export const Bid = model<IBid>('Bid', BidSchema);
