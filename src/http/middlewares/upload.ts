@@ -2,6 +2,8 @@ import multer from 'multer';
 import path from 'path';
 import type { Request } from 'express';
 
+const MAX_MB = Number(process.env.UPLOAD_MAX_MB || 5); // default 5 MB
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, 'uploads/'),
   filename: (_req, file, cb) =>
@@ -22,6 +24,6 @@ function fileFilter(
 
 export const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: MAX_MB * 1024 * 1024 },
   fileFilter,
 });
