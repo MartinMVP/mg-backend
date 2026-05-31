@@ -5,6 +5,8 @@ export interface IBid {
   listing: Types.ObjectId;
   bidder: Types.ObjectId;
   amount: number;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 const BidSchema = new Schema<IBid>(

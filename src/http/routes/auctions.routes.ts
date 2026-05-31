@@ -8,7 +8,10 @@ const r = Router();
 r.get('/auctions', ctrl.listAuctions);
 r.get('/auctions/:id', ctrl.getAuction);
 
-// gestión (ajusta requireRole si lo quieres restringir a admin/super)
+// NUEVA RUTA
+r.get('/auctions/:id/bids', ctrl.getAuctionBids);
+
+// gestión
 r.post('/auctions', requireAuth, ctrl.createAuction);
 r.post('/auctions/:id/open', requireAuth, ctrl.openAuction);
 r.post('/auctions/:id/pause', requireAuth, ctrl.pauseAuction);

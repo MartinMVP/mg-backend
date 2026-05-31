@@ -4,6 +4,7 @@ import app from './app';
 import { env } from './config/env';
 import { connectDB } from './config/db';
 import { initIO } from './realtime/socket';
+import { startAuctionScheduler } from './jobs/auctionScheduler';
 
 const PORT = Number(env.port) || Number(process.env.PORT) || 8080;
 const HOST = (process.env.HOST || '0.0.0.0') as string;
@@ -17,7 +18,8 @@ async function bootstrap() {
   try {
     await connectDB();
     const server = http.createServer(app);
-    initIO(server); // 👈 WebSocket listo
+    const io = initIO(server); // 👈 WebSocket listo
+    startAuctionScheduler(io.of('/auctions')); // 👈 Scheduler listo
 
     server.listen(PORT, HOST, () => {
       console.log(`🚀 API+WS listo en http://${HOST}:${PORT}`);
