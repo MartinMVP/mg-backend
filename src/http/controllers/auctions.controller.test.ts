@@ -1,15 +1,25 @@
 import request from 'supertest';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Auction } from '../../domain/auctions/auction.model';
 import { Bid } from '../../domain/auctions/bid.model';
+import { emitAuctionBidAccepted } from '../../realtime/socket';
 import { bearer, createAccessToken } from '../../test/helpers/auth';
 import { createLiveAuction, createTestUser } from '../../test/helpers/factories';
+
+vi.mock('../../realtime/socket', () => ({
+  emitAuctionBidAccepted: vi.fn(),
+  emitAuctionStateChanged: vi.fn(),
+}));
 
 describe('POST /auctions/:id/bid', () => {
   let app: typeof import('../../app').default;
 
   beforeAll(async () => {
     app = (await import('../../app')).default;
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
   it('returns 400 and does not create a bid when amount is too low', async () => {
@@ -62,6 +72,20 @@ describe('POST /auctions/:id/bid', () => {
     expect(String(bids[0].bidder)).toBe(String(bidder._id));
     expect(freshAuction?.currentPrice).toBe(1100);
     expect(String(freshAuction?.currentWinner)).toBe(String(bidder._id));
+    expect(emitAuctionBidAccepted).toHaveBeenCalledWith(
+      String(auction._id),
+      expect.objectContaining({
+        auctionId: String(auction._id),
+        user: String(bidder._id),
+        amount: 1100,
+        currentPrice: 1100,
+        bid: expect.objectContaining({
+          auction: String(auction._id),
+          bidder: String(bidder._id),
+          amount: 1100,
+        }),
+      })
+    );
   });
 
   it('returns 400 for an invalid auction ObjectId', async () => {
@@ -103,4 +127,35 @@ describe('POST /auctions/:id/bid', () => {
       expect(freshAuction?.currentWinner).toBeUndefined();
     }
   );
+});
+
+describe('GET /auctions/:id/bids', () => {
+  let app: typeof import('../../app').default;
+
+  beforeAll(async () => {
+    app = (await import('../../app')).default;
+  });
+
+  it('does not expose bidder email or role', async () => {
+    const bidder = await createTestUser('user');
+    const auction = await createLiveAuction({
+      currentPrice: 1100,
+      currentWinner: bidder._id,
+    });
+
+    await Bid.create({
+      auction: auction._id,
+      listing: auction.listing,
+      bidder: bidder._id,
+      amount: 1100,
+    });
+
+    const res = await request(app).get(`/auctions/${auction._id}/bids`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].bidder).toMatchObject({ name: bidder.name });
+    expect(res.body[0].bidder).not.toHaveProperty('email');
+    expect(res.body[0].bidder).not.toHaveProperty('role');
+  });
 });

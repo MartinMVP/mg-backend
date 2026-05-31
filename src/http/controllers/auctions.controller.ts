@@ -3,7 +3,7 @@ import { Types } from 'mongoose';
 import { Auction } from '../../domain/auctions/auction.model';
 import { Bid } from '../../domain/auctions/bid.model';
 import { Audit } from '../../domain/audit/audit.model';
-import { emitAuctionStateChanged } from '../../realtime/socket';
+import { emitAuctionBidAccepted, emitAuctionStateChanged } from '../../realtime/socket';
 
 function asNum(v: any, def: number) {
   const n = Number(v);
@@ -13,6 +13,22 @@ function asNum(v: any, def: number) {
 function parseBidAmount(v: any) {
   const amount = Number(v);
   return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
+function stateChangedPayload(auction: any) {
+  const payload: any = {
+    auctionId: String(auction._id),
+    state: auction.state,
+    endsAt: auction.endsAt.toISOString(),
+    currentWinner: auction.currentWinner ? String(auction.currentWinner) : null,
+    currentPrice: auction.currentPrice,
+  };
+
+  if (auction.state === 'closed') {
+    payload.finalPrice = auction.currentPrice;
+  }
+
+  return payload;
 }
 
 // ---------- CRUD/acciones ----------
@@ -68,7 +84,7 @@ export async function getAuctionBids(req: Request, res: Response) {
   const bids = await Bid.find({ auction: id })
     .sort({ createdAt: -1 })
     .limit(20)
-    .populate('bidder', 'name email role')
+    .populate('bidder', 'name')
     .lean();
 
   res.json(bids);
@@ -93,6 +109,8 @@ export async function openAuction(req: Request, res: Response) {
     payload: { to: 'live' },
   });
 
+  emitAuctionStateChanged(String(doc._id), stateChangedPayload(doc));
+
   res.json(doc);
 }
 
@@ -114,6 +132,8 @@ export async function pauseAuction(req: Request, res: Response) {
     entityId: doc._id,
     payload: { to: 'paused' },
   });
+
+  emitAuctionStateChanged(String(doc._id), stateChangedPayload(doc));
 
   res.json(doc);
 }
@@ -137,6 +157,8 @@ export async function resumeAuction(req: Request, res: Response) {
     payload: { to: 'live' },
   });
 
+  emitAuctionStateChanged(String(doc._id), stateChangedPayload(doc));
+
   res.json(doc);
 }
 
@@ -158,6 +180,8 @@ export async function closeAuction(req: Request, res: Response) {
     entityId: doc._id,
     payload: { to: 'closed' },
   });
+
+  emitAuctionStateChanged(String(doc._id), stateChangedPayload(doc));
 
   res.json(doc);
 }
@@ -245,11 +269,7 @@ export async function placeBidHttp(req: Request, res: Response) {
   });
 
   if (shouldExtend && extendedEndsAt) {
-    emitAuctionStateChanged(String(next._id), {
-      auctionId: String(next._id),
-      state: next.state,
-      endsAt: next.endsAt.toISOString(),
-    });
+    emitAuctionStateChanged(String(next._id), stateChangedPayload(next));
   }
 
   await Audit.create({
@@ -260,15 +280,32 @@ export async function placeBidHttp(req: Request, res: Response) {
     payload: { amount },
   });
 
-  res.json({
-    ...next.toObject(),
-    lastBid: {
-      _id: bid._id,
-      auction: bid.auction,
-      listing: bid.listing,
-      bidder: bid.bidder,
-      amount: bid.amount,
+  const lastBid = {
+    _id: bid._id,
+    auction: bid.auction,
+    listing: bid.listing,
+    bidder: bid.bidder,
+    amount: bid.amount,
+    createdAt: (bid as any).createdAt,
+  };
+
+  emitAuctionBidAccepted(String(next._id), {
+    auctionId: String(next._id),
+    user: user.sub,
+    amount,
+    currentPrice: next.currentPrice,
+    bid: {
+      _id: String(bid._id),
+      auction: String(next._id),
+      listing: String(next.listing),
+      bidder: user.sub,
+      amount,
       createdAt: (bid as any).createdAt,
     },
+  });
+
+  res.json({
+    ...next.toObject(),
+    lastBid,
   });
 }

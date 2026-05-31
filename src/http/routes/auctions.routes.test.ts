@@ -1,15 +1,25 @@
 import request from 'supertest';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Auction } from '../../domain/auctions/auction.model';
 import { Bid } from '../../domain/auctions/bid.model';
+import { emitAuctionStateChanged } from '../../realtime/socket';
 import { bearer, createAccessToken } from '../../test/helpers/auth';
 import { createLiveAuction, createTestListing, createTestUser } from '../../test/helpers/factories';
+
+vi.mock('../../realtime/socket', () => ({
+  emitAuctionBidAccepted: vi.fn(),
+  emitAuctionStateChanged: vi.fn(),
+}));
 
 describe('auction admin permissions', () => {
   let app: typeof import('../../app').default;
 
   beforeAll(async () => {
     app = (await import('../../app')).default;
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
   async function authHeader(role: 'user' | 'super') {
@@ -101,5 +111,41 @@ describe('auction admin permissions', () => {
     const bid = await Bid.findOne({ auction: auction._id });
     expect(bid).toBeTruthy();
     expect(String(bid?.bidder)).toBe(String(user._id));
+  });
+
+  it.each([
+    ['open', 'scheduled', 'live'],
+    ['pause', 'live', 'paused'],
+    ['resume', 'paused', 'live'],
+    ['close', 'live', 'closed'],
+  ])('emits state_changed when admin %s changes auction state', async (action, initialState, nextState) => {
+    const { authorization } = await authHeader('super');
+    const auction = await createLiveAuction({
+      state: initialState,
+      currentPrice: 1000,
+    });
+
+    const res = await request(app)
+      .post(`/auctions/${auction._id}/${action}`)
+      .set('Authorization', authorization);
+
+    expect(res.status).toBe(200);
+    expect(emitAuctionStateChanged).toHaveBeenCalledWith(
+      String(auction._id),
+      expect.objectContaining({
+        auctionId: String(auction._id),
+        state: nextState,
+        endsAt: expect.any(String),
+        currentWinner: null,
+        currentPrice: 1000,
+      })
+    );
+
+    if (nextState === 'closed') {
+      expect(emitAuctionStateChanged).toHaveBeenCalledWith(
+        String(auction._id),
+        expect.objectContaining({ finalPrice: 1000 })
+      );
+    }
   });
 });

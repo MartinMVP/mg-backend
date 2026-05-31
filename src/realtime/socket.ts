@@ -12,6 +12,10 @@ export function emitAuctionStateChanged(auctionId: string, payload: any) {
   auctionNamespace?.to(auctionId).emit('state_changed', payload);
 }
 
+export function emitAuctionBidAccepted(auctionId: string, payload: any) {
+  auctionNamespace?.to(auctionId).emit('bid_accepted', payload);
+}
+
 function parseBidAmount(value: any) {
   const amount = Number(value);
   return Number.isFinite(amount) && amount > 0 ? amount : null;
@@ -169,7 +173,7 @@ export function initIO(httpServer: HttpServer) {
           payload: { amount },
         });
 
-        nsp.to(String(next._id)).emit('bid_accepted', {
+        emitAuctionBidAccepted(String(next._id), {
           auctionId: String(next._id),
           user: user.sub,
           amount,
