@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import { Auction } from '../../domain/auctions/auction.model';
 import { Bid } from '../../domain/auctions/bid.model';
 import { Audit } from '../../domain/audit/audit.model';
+import { emitAuctionStateChanged } from '../../realtime/socket';
 
 function asNum(v: any, def: number) {
   const n = Number(v);
@@ -189,20 +190,40 @@ export async function placeBidHttp(req: Request, res: Response) {
     return res.status(400).json({ error: 'Bid too low', min });
   }
 
-  // atómico: asegurar no hubo carrera
+  const secs = Math.floor((a.endsAt.getTime() - now.getTime()) / 1000);
+  const shouldExtend =
+    secs <= a.antiSnipingSec && a.antiSnipingCount < a.antiSnipingMaxExt;
+  const extendedEndsAt = shouldExtend
+    ? new Date(a.endsAt.getTime() + a.antiSnipingExtendSec * 1000)
+    : null;
+  const bidNow = new Date();
+
+  const bidFilter: any = {
+    _id,
+    state: 'live',
+    currentPrice: a.currentPrice,
+  };
+
+  const bidUpdate: any = {
+    $set: {
+      currentPrice: amount,
+      currentWinner: user.sub,
+    },
+  };
+
+  if (shouldExtend && extendedEndsAt) {
+    bidFilter.endsAt = { $eq: a.endsAt, $gt: bidNow };
+    bidFilter.antiSnipingCount = a.antiSnipingCount;
+    bidUpdate.$set.endsAt = extendedEndsAt;
+    bidUpdate.$inc = { antiSnipingCount: 1 };
+  } else {
+    bidFilter.endsAt = { $gt: bidNow };
+  }
+
+  // atómico: asegurar no hubo carrera y extender anti-sniping si aplica
   const next = await Auction.findOneAndUpdate(
-    {
-      _id,
-      state: 'live',
-      currentPrice: a.currentPrice,
-      endsAt: { $gt: now },
-    },
-    {
-      $set: {
-        currentPrice: amount,
-        currentWinner: user.sub,
-      },
-    },
+    bidFilter,
+    bidUpdate,
     { new: true }
   );
 
@@ -215,13 +236,12 @@ export async function placeBidHttp(req: Request, res: Response) {
     amount,
   });
 
-  // anti-sniping
-  const secs = Math.floor((next.endsAt.getTime() - now.getTime()) / 1000);
-
-  if (secs <= next.antiSnipingSec && next.antiSnipingCount < next.antiSnipingMaxExt) {
-    next.endsAt = new Date(next.endsAt.getTime() + next.antiSnipingExtendSec * 1000);
-    next.antiSnipingCount += 1;
-    await next.save();
+  if (shouldExtend && extendedEndsAt) {
+    emitAuctionStateChanged(String(next._id), {
+      auctionId: String(next._id),
+      state: next.state,
+      endsAt: next.endsAt.toISOString(),
+    });
   }
 
   await Audit.create({

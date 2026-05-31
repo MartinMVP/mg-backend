@@ -6,12 +6,19 @@ import { Auction } from '../domain/auctions/auction.model';
 import { Bid } from '../domain/auctions/bid.model';
 import { Audit } from '../domain/audit/audit.model';
 
+let auctionNamespace: ReturnType<Server['of']> | null = null;
+
+export function emitAuctionStateChanged(auctionId: string, payload: any) {
+  auctionNamespace?.to(auctionId).emit('state_changed', payload);
+}
+
 export function initIO(httpServer: HttpServer) {
   const io = new Server(httpServer, {
     cors: { origin: env.corsOrigin, credentials: true },
   });
 
   const nsp = io.of('/auctions');
+  auctionNamespace = nsp;
 
   // Auth por token en handshake del namespace real de subastas.
   nsp.use((socket, next) => {
@@ -75,19 +82,39 @@ export function initIO(httpServer: HttpServer) {
           });
         }
 
+        const secs = Math.floor((a.endsAt.getTime() - now.getTime()) / 1000);
+        const shouldExtend =
+          secs <= a.antiSnipingSec && a.antiSnipingCount < a.antiSnipingMaxExt;
+        const extendedEndsAt = shouldExtend
+          ? new Date(a.endsAt.getTime() + a.antiSnipingExtendSec * 1000)
+          : null;
+        const bidNow = new Date();
+
+        const bidFilter: any = {
+          _id: a._id,
+          state: 'live',
+          currentPrice: a.currentPrice,
+        };
+
+        const bidUpdate: any = {
+          $set: {
+            currentPrice: payload.amount,
+            currentWinner: user.sub,
+          },
+        };
+
+        if (shouldExtend && extendedEndsAt) {
+          bidFilter.endsAt = { $eq: a.endsAt, $gt: bidNow };
+          bidFilter.antiSnipingCount = a.antiSnipingCount;
+          bidUpdate.$set.endsAt = extendedEndsAt;
+          bidUpdate.$inc = { antiSnipingCount: 1 };
+        } else {
+          bidFilter.endsAt = { $gt: bidNow };
+        }
+
         const next = await Auction.findOneAndUpdate(
-          {
-            _id: a._id,
-            state: 'live',
-            currentPrice: a.currentPrice,
-            endsAt: { $gt: now },
-          },
-          {
-            $set: {
-              currentPrice: payload.amount,
-              currentWinner: user.sub,
-            },
-          },
+          bidFilter,
+          bidUpdate,
           { new: true }
         );
 
@@ -105,13 +132,7 @@ export function initIO(httpServer: HttpServer) {
           amount: payload.amount,
         });
 
-        const secs = Math.floor((next.endsAt.getTime() - now.getTime()) / 1000);
-
-        if (secs <= next.antiSnipingSec && next.antiSnipingCount < next.antiSnipingMaxExt) {
-          next.endsAt = new Date(next.endsAt.getTime() + next.antiSnipingExtendSec * 1000);
-          next.antiSnipingCount += 1;
-          await next.save();
-
+        if (shouldExtend && extendedEndsAt) {
           nsp.to(String(next._id)).emit('state_changed', {
             auctionId: String(next._id),
             state: next.state,
