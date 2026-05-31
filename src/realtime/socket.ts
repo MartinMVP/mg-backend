@@ -11,8 +11,10 @@ export function initIO(httpServer: HttpServer) {
     cors: { origin: env.corsOrigin, credentials: true },
   });
 
-  // Auth por token en handshake
-  io.use((socket, next) => {
+  const nsp = io.of('/auctions');
+
+  // Auth por token en handshake del namespace real de subastas.
+  nsp.use((socket, next) => {
     const hdr = socket.handshake.auth?.token || socket.handshake.headers['authorization'];
     const token = typeof hdr === 'string' ? hdr.replace(/^Bearer\s+/i, '') : '';
 
@@ -26,8 +28,6 @@ export function initIO(httpServer: HttpServer) {
       next(new Error('Unauthorized'));
     }
   });
-
-  const nsp = io.of('/auctions');
 
   nsp.on('connection', (socket) => {
     const user = (socket as any).user;
