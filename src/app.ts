@@ -9,6 +9,7 @@ import catalogRoutes from './http/routes/catalog.routes';
 import mediaRoutes from './http/routes/media.routes';
 import auctionsRoutes from './http/routes/auctions.routes';
 import notificationsRoutes from './http/routes/notifications.routes';
+import accountRoutes from './http/routes/account.routes';
 
 import { securityMiddleware } from './config/security';
 import authRoutes from './http/routes/auth.routes';
@@ -35,6 +36,7 @@ app.use('/catalog', catalogRoutes);
 app.use('/api', mediaRoutes); // si lo prefieres en /api
 app.use('/', auctionsRoutes);
 app.use('/', notificationsRoutes);
+app.use('/', accountRoutes);
 
 
 /** ---------- Swagger (opcional/protegido) ---------- */
