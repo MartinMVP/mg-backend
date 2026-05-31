@@ -76,4 +76,31 @@ describe('POST /auctions/:id/bid', () => {
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'Invalid auction id' });
   });
+
+  it.each(['abc', 'NaN', 'Infinity', 0, -10])(
+    'returns 400 and does not mutate auction for invalid amount %s',
+    async (amount) => {
+      const bidder = await createTestUser('user');
+      const auction = await createLiveAuction({
+        currentPrice: 1000,
+        minIncrement: 100,
+      });
+      const token = createAccessToken(String(bidder._id), 'user');
+
+      const res = await request(app)
+        .post(`/auctions/${auction._id}/bid`)
+        .set('Authorization', bearer(token))
+        .send({ amount });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: 'Invalid bid amount' });
+
+      const bidCount = await Bid.countDocuments({ auction: auction._id });
+      const freshAuction = await Auction.findById(auction._id);
+
+      expect(bidCount).toBe(0);
+      expect(freshAuction?.currentPrice).toBe(1000);
+      expect(freshAuction?.currentWinner).toBeUndefined();
+    }
+  );
 });

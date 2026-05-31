@@ -12,6 +12,24 @@ export function emitAuctionStateChanged(auctionId: string, payload: any) {
   auctionNamespace?.to(auctionId).emit('state_changed', payload);
 }
 
+function parseBidAmount(value: any) {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
+export function rejectInvalidAuctionBidAmount(payload: any, socket: any) {
+  const amount = parseBidAmount(payload?.amount);
+
+  if (amount !== null) return amount;
+
+  socket.emit('bid_rejected', {
+    auctionId: payload?.auctionId,
+    error: 'Invalid bid amount',
+  });
+
+  return null;
+}
+
 export function initIO(httpServer: HttpServer) {
   const io = new Server(httpServer, {
     cors: { origin: env.corsOrigin, credentials: true },
@@ -49,6 +67,9 @@ export function initIO(httpServer: HttpServer) {
 
     socket.on('place_bid', async (payload: { auctionId: string; amount: number }) => {
       try {
+        const amount = rejectInvalidAuctionBidAmount(payload, socket);
+        if (amount === null) return;
+
         const now = new Date();
 
         const a = await Auction.findOne({
@@ -66,13 +87,13 @@ export function initIO(httpServer: HttpServer) {
 
         const min = a.currentPrice + a.minIncrement;
 
-        if (payload.amount < min) {
+        if (amount < min) {
           await Audit.create({
             actor: user?.sub,
             action: 'BID_REJECTED',
             entity: 'Auction',
             entityId: a._id,
-            payload: { reason: 'low', amount: payload.amount },
+            payload: { reason: 'low', amount },
           });
 
           return socket.emit('bid_rejected', {
@@ -98,7 +119,7 @@ export function initIO(httpServer: HttpServer) {
 
         const bidUpdate: any = {
           $set: {
-            currentPrice: payload.amount,
+            currentPrice: amount,
             currentWinner: user.sub,
           },
         };
@@ -129,7 +150,7 @@ export function initIO(httpServer: HttpServer) {
           auction: next._id,
           listing: next.listing,
           bidder: user.sub,
-          amount: payload.amount,
+          amount,
         });
 
         if (shouldExtend && extendedEndsAt) {
@@ -145,20 +166,20 @@ export function initIO(httpServer: HttpServer) {
           action: 'BID_ACCEPTED',
           entity: 'Auction',
           entityId: next._id,
-          payload: { amount: payload.amount },
+          payload: { amount },
         });
 
         nsp.to(String(next._id)).emit('bid_accepted', {
           auctionId: String(next._id),
           user: user.sub,
-          amount: payload.amount,
+          amount,
           currentPrice: next.currentPrice,
           bid: {
             _id: String(bid._id),
             auction: String(next._id),
             listing: String(next.listing),
             bidder: user.sub,
-            amount: payload.amount,
+            amount,
             createdAt: bid.createdAt,
           },
         });

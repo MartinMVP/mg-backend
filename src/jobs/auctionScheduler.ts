@@ -14,31 +14,36 @@ export async function closeExpiredAuctions(auctionNamespace?: Namespace) {
     if (!expired.length) return;
 
     for (const auction of expired) {
-      auction.state = 'closed';
-      await auction.save();
+      const closedAuction = await Auction.findOneAndUpdate(
+        { _id: auction._id, state: 'live', endsAt: { $lte: now } },
+        { $set: { state: 'closed' } },
+        { new: true }
+      );
+
+      if (!closedAuction) continue;
 
       await Audit.create({
-        actor: auction.currentWinner || null,
+        actor: closedAuction.currentWinner ? String(closedAuction.currentWinner) : 'system',
         action: 'AUCTION_AUTO_CLOSE',
         entity: 'Auction',
-        entityId: auction._id,
+        entityId: closedAuction._id,
         payload: {
-          winner: auction.currentWinner,
-          finalPrice: auction.currentPrice,
+          winner: closedAuction.currentWinner,
+          finalPrice: closedAuction.currentPrice,
         },
       });
 
-      auctionNamespace?.to(String(auction._id)).emit('state_changed', {
-        auctionId: String(auction._id),
-        state: auction.state,
-        currentWinner: auction.currentWinner ? String(auction.currentWinner) : null,
-        currentPrice: auction.currentPrice,
-        finalPrice: auction.currentPrice,
-        endsAt: auction.endsAt.toISOString(),
+      auctionNamespace?.to(String(closedAuction._id)).emit('state_changed', {
+        auctionId: String(closedAuction._id),
+        state: closedAuction.state,
+        currentWinner: closedAuction.currentWinner ? String(closedAuction.currentWinner) : null,
+        currentPrice: closedAuction.currentPrice,
+        finalPrice: closedAuction.currentPrice,
+        endsAt: closedAuction.endsAt.toISOString(),
       });
 
       console.log(
-        `🏁 Subasta cerrada: ${auction.title} | Ganador: ${auction.currentWinner || 'N/A'} | Precio: ${auction.currentPrice}`
+        `🏁 Subasta cerrada: ${closedAuction.title} | Ganador: ${closedAuction.currentWinner || 'N/A'} | Precio: ${closedAuction.currentPrice}`
       );
     }
   } catch (err) {

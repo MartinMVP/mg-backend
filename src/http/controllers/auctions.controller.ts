@@ -10,6 +10,11 @@ function asNum(v: any, def: number) {
   return Number.isFinite(n) ? n : def;
 }
 
+function parseBidAmount(v: any) {
+  const amount = Number(v);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
 // ---------- CRUD/acciones ----------
 export async function createAuction(req: Request, res: Response) {
   const { listing, startsAt, endsAt, title, startPrice, minIncrement } = req.body;
@@ -160,10 +165,13 @@ export async function closeAuction(req: Request, res: Response) {
 // ---------- Fallback HTTP para pujar ----------
 export async function placeBidHttp(req: Request, res: Response) {
   const user = (req as any).user;
-  const amount = Number(req.body?.amount || 0);
+  const amount = parseBidAmount(req.body?.amount);
   const id = String(req.params.id);
   if (!Types.ObjectId.isValid(id)) {
     return res.status(400).json({ error: 'Invalid auction id' });
+  }
+  if (amount === null) {
+    return res.status(400).json({ error: 'Invalid bid amount' });
   }
   const _id = new Types.ObjectId(id);
   const now = new Date();

@@ -48,6 +48,36 @@ describe('closeExpiredAuctions', () => {
     );
   });
 
+  it('closes an expired live auction without winner and emits currentWinner null', async () => {
+    const auction = await createLiveAuction({
+      endsAt: new Date(Date.now() - 60_000),
+      currentPrice: 1000,
+    });
+    const { namespace, to, emit } = createNamespaceMock();
+
+    await closeExpiredAuctions(namespace);
+
+    const freshAuction = await Auction.findById(auction._id);
+    const audit = await Audit.findOne({
+      actor: 'system',
+      action: 'AUCTION_AUTO_CLOSE',
+    });
+
+    expect(freshAuction?.state).toBe('closed');
+    expect(audit).toBeTruthy();
+    expect(to).toHaveBeenCalledWith(String(auction._id));
+    expect(emit).toHaveBeenCalledWith(
+      'state_changed',
+      expect.objectContaining({
+        auctionId: String(auction._id),
+        state: 'closed',
+        currentWinner: null,
+        currentPrice: 1000,
+        finalPrice: 1000,
+      })
+    );
+  });
+
   it('does not change a live auction that has not expired', async () => {
     const auction = await createLiveAuction({
       endsAt: new Date(Date.now() + 60_000),
