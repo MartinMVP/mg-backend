@@ -8,6 +8,7 @@ import basicAuth from 'basic-auth';
 import catalogRoutes from './http/routes/catalog.routes';
 import mediaRoutes from './http/routes/media.routes';
 import auctionsRoutes from './http/routes/auctions.routes';
+import notificationsRoutes from './http/routes/notifications.routes';
 
 import { securityMiddleware } from './config/security';
 import authRoutes from './http/routes/auth.routes';
@@ -33,6 +34,7 @@ app.use('/files', express.static('uploads', { maxAge: '1d', immutable: true }));
 app.use('/catalog', catalogRoutes);
 app.use('/api', mediaRoutes); // si lo prefieres en /api
 app.use('/', auctionsRoutes);
+app.use('/', notificationsRoutes);
 
 
 /** ---------- Swagger (opcional/protegido) ---------- */

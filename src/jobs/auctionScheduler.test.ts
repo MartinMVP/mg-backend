@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { AuctionResult } from '../domain/auctionResults/auctionResult.model';
 import { Audit } from '../domain/audit/audit.model';
 import { Auction } from '../domain/auctions/auction.model';
+import { Notification } from '../domain/notifications/notification.model';
 import { createLiveAuction, createTestUser } from '../test/helpers/factories';
 import { closeExpiredAuctions } from './auctionScheduler';
 
@@ -48,6 +50,30 @@ describe('closeExpiredAuctions', () => {
     );
   });
 
+  it('creates an auction result and notifications when an expired auction has a winner', async () => {
+    const winner = await createTestUser('user');
+    const auction = await createLiveAuction({
+      endsAt: new Date(Date.now() - 60_000),
+      currentPrice: 1800,
+      currentWinner: winner._id,
+    });
+    const { namespace } = createNamespaceMock();
+
+    await closeExpiredAuctions(namespace);
+
+    const result = await AuctionResult.findOne({ auctionId: auction._id });
+    const notifications = await Notification.find({}).sort({ type: 1 });
+
+    expect(result).toBeTruthy();
+    expect(String(result?.listingId)).toBe(String(auction.listing));
+    expect(String(result?.buyerId)).toBe(String(winner._id));
+    expect(result?.finalPrice).toBe(1800);
+    expect(result?.status).toBe('pending_contact');
+
+    expect(notifications).toHaveLength(2);
+    expect(notifications.map((n) => n.type).sort()).toEqual(['auction_closed', 'auction_won']);
+  });
+
   it('closes an expired live auction without winner and emits currentWinner null', async () => {
     const auction = await createLiveAuction({
       endsAt: new Date(Date.now() - 60_000),
@@ -62,9 +88,11 @@ describe('closeExpiredAuctions', () => {
       actor: 'system',
       action: 'AUCTION_AUTO_CLOSE',
     });
+    const result = await AuctionResult.findOne({ auctionId: auction._id });
 
     expect(freshAuction?.state).toBe('closed');
     expect(audit).toBeTruthy();
+    expect(result).toBeNull();
     expect(to).toHaveBeenCalledWith(String(auction._id));
     expect(emit).toHaveBeenCalledWith(
       'state_changed',
