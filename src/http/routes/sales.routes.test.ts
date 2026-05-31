@@ -140,4 +140,90 @@ describe('sales confirmation routes', () => {
     expect(notification).toBeTruthy();
     expect(notification?.read).toBe(false);
   });
+
+  it.each(['confirm', 'cancel'])('returns 400 for invalid ObjectId on %s', async (action) => {
+    const seller = await createTestUser('user');
+    const token = createAccessToken(String(seller._id), 'user');
+
+    const res = await request(app)
+      .post(`/sales/not-an-object-id/${action}`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Invalid sale id' });
+  });
+
+  it('does not allow confirming a sale that was cancelled', async () => {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const sale = await createSaleResult(seller._id, buyer._id, 'sale_cancelled');
+    const token = createAccessToken(String(seller._id), 'user');
+
+    const res = await request(app)
+      .post(`/sales/${sale._id}/confirm`)
+      .set('Authorization', bearer(token));
+
+    const freshSale = await AuctionResult.findById(sale._id);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'Sale already finalized' });
+    expect(freshSale?.status).toBe('sale_cancelled');
+  });
+
+  it('does not allow cancelling a sale that was confirmed', async () => {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const sale = await createSaleResult(seller._id, buyer._id, 'sale_confirmed');
+    const token = createAccessToken(String(seller._id), 'user');
+
+    const res = await request(app)
+      .post(`/sales/${sale._id}/cancel`)
+      .set('Authorization', bearer(token));
+
+    const freshSale = await AuctionResult.findById(sale._id);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'Sale already finalized' });
+    expect(freshSale?.status).toBe('sale_confirmed');
+  });
+
+  it.each(['confirm', 'cancel'])('does not allow %s when sale is in dispute', async (action) => {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const sale = await createSaleResult(seller._id, buyer._id, 'in_dispute');
+    const token = createAccessToken(String(seller._id), 'user');
+
+    const res = await request(app)
+      .post(`/sales/${sale._id}/${action}`)
+      .set('Authorization', bearer(token));
+
+    const freshSale = await AuctionResult.findById(sale._id);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'Sale already finalized' });
+    expect(freshSale?.status).toBe('in_dispute');
+  });
+
+  it.each([
+    ['admin', 'confirm', 'sale_confirmed'],
+    ['admin', 'cancel', 'sale_cancelled'],
+    ['super', 'confirm', 'sale_confirmed'],
+    ['super', 'cancel', 'sale_cancelled'],
+  ] as const)('allows role %s to %s a sale', async (role, action, status) => {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const manager = await createTestUser(role);
+    const sale = await createSaleResult(seller._id, buyer._id);
+    const token = createAccessToken(String(manager._id), role);
+
+    const res = await request(app)
+      .post(`/sales/${sale._id}/${action}`)
+      .set('Authorization', bearer(token));
+
+    const freshSale = await AuctionResult.findById(sale._id);
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe(status);
+    expect(freshSale?.status).toBe(status);
+  });
 });

@@ -78,4 +78,38 @@ describe('notifications routes', () => {
     expect(otherRes.status).toBe(404);
     expect(freshOther?.read).toBe(false);
   });
+
+  it('returns 400 for an invalid notification ObjectId', async () => {
+    const user = await createTestUser('user');
+    const token = createAccessToken(String(user._id), 'user');
+
+    const res = await request(app)
+      .post('/notifications/not-an-object-id/read')
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Invalid notification id' });
+  });
+
+  it('does not mark another user notification as read', async () => {
+    const user = await createTestUser('user');
+    const other = await createTestUser('user');
+    const token = createAccessToken(String(user._id), 'user');
+
+    const otherNotification = await Notification.create({
+      userId: other._id,
+      type: 'auction_closed',
+      title: 'Otra',
+      message: 'Notificacion de otro usuario.',
+    });
+
+    const res = await request(app)
+      .post(`/notifications/${otherNotification._id}/read`)
+      .set('Authorization', bearer(token));
+
+    const freshOther = await Notification.findById(otherNotification._id);
+
+    expect(res.status).toBe(404);
+    expect(freshOther?.read).toBe(false);
+  });
 });
