@@ -1,8 +1,6 @@
 import { Auction } from '../domain/auctions/auction.model';
-import { AuctionResult } from '../domain/auctionResults/auctionResult.model';
 import { Audit } from '../domain/audit/audit.model';
-import { Listing } from '../domain/listings/listing.model';
-import { Notification } from '../domain/notifications/notification.model';
+import { createPostAuctionFlow } from '../domain/auctions/auctionClose.service';
 import type { Namespace } from 'socket.io';
 
 export async function closeExpiredAuctions(auctionNamespace?: Namespace) {
@@ -36,42 +34,7 @@ export async function closeExpiredAuctions(auctionNamespace?: Namespace) {
         },
       });
 
-      if (closedAuction.currentWinner) {
-        const listing = await Listing.findById(closedAuction.listing).select('seller');
-
-        if (listing) {
-          await AuctionResult.findOneAndUpdate(
-            { auctionId: closedAuction._id },
-            {
-              $setOnInsert: {
-                auctionId: closedAuction._id,
-                listingId: closedAuction.listing,
-                sellerId: listing.seller,
-                buyerId: closedAuction.currentWinner,
-                finalPrice: closedAuction.currentPrice,
-                closedAt: now,
-                status: 'pending_contact',
-              },
-            },
-            { upsert: true, new: true }
-          );
-
-          await Notification.create([
-            {
-              userId: closedAuction.currentWinner,
-              type: 'auction_won',
-              title: 'Subasta ganada',
-              message: `Ganaste la subasta ${closedAuction.title} por ${closedAuction.currentPrice}.`,
-            },
-            {
-              userId: listing.seller,
-              type: 'auction_closed',
-              title: 'Subasta cerrada',
-              message: `Tu subasta ${closedAuction.title} cerró por ${closedAuction.currentPrice}.`,
-            },
-          ]);
-        }
-      }
+      await createPostAuctionFlow(closedAuction, now);
 
       auctionNamespace?.to(String(closedAuction._id)).emit('state_changed', {
         auctionId: String(closedAuction._id),

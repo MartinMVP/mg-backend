@@ -1,7 +1,10 @@
 import request from 'supertest';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { Auction } from '../../domain/auctions/auction.model';
 import { Bid } from '../../domain/auctions/bid.model';
+import { Notification } from '../../domain/notifications/notification.model';
+import { closeExpiredAuctions } from '../../jobs/auctionScheduler';
 import { emitAuctionStateChanged } from '../../realtime/socket';
 import { bearer, createAccessToken } from '../../test/helpers/auth';
 import { createLiveAuction, createTestListing, createTestUser } from '../../test/helpers/factories';
@@ -147,5 +150,78 @@ describe('auction admin permissions', () => {
         expect.objectContaining({ finalPrice: 1000 })
       );
     }
+  });
+
+  it('creates AuctionResult and notifications when admin closes an auction with winner', async () => {
+    const { authorization } = await authHeader('super');
+    const winner = await createTestUser('user');
+    const auction = await createLiveAuction({
+      state: 'live',
+      currentPrice: 2500,
+      currentWinner: winner._id,
+    });
+
+    const res = await request(app)
+      .post(`/auctions/${auction._id}/close`)
+      .set('Authorization', authorization);
+
+    expect(res.status).toBe(200);
+
+    const result = await AuctionResult.findOne({ auctionId: auction._id });
+    const notifications = await Notification.find({}).sort({ type: 1 });
+
+    expect(result).toBeTruthy();
+    expect(String(result?.listingId)).toBe(String(auction.listing));
+    expect(String(result?.buyerId)).toBe(String(winner._id));
+    expect(result?.finalPrice).toBe(2500);
+    expect(result?.status).toBe('pending_contact');
+    expect(notifications).toHaveLength(2);
+    expect(notifications.map((n) => n.type).sort()).toEqual(['auction_closed', 'auction_won']);
+  });
+
+  it('does not duplicate AuctionResult or notifications when admin close is repeated', async () => {
+    const { authorization } = await authHeader('super');
+    const winner = await createTestUser('user');
+    const auction = await createLiveAuction({
+      state: 'live',
+      currentPrice: 2600,
+      currentWinner: winner._id,
+    });
+
+    await request(app)
+      .post(`/auctions/${auction._id}/close`)
+      .set('Authorization', authorization)
+      .expect(200);
+
+    await request(app)
+      .post(`/auctions/${auction._id}/close`)
+      .set('Authorization', authorization)
+      .expect(409);
+
+    expect(await AuctionResult.countDocuments({ auctionId: auction._id })).toBe(1);
+    expect(await Notification.countDocuments()).toBe(2);
+  });
+
+  it('does not duplicate post-auction flow when scheduler runs after manual close', async () => {
+    const { authorization } = await authHeader('super');
+    const winner = await createTestUser('user');
+    const auction = await createLiveAuction({
+      state: 'live',
+      endsAt: new Date(Date.now() - 60_000),
+      currentPrice: 2700,
+      currentWinner: winner._id,
+    });
+
+    await request(app)
+      .post(`/auctions/${auction._id}/close`)
+      .set('Authorization', authorization)
+      .expect(200);
+
+    await closeExpiredAuctions();
+
+    const freshAuction = await Auction.findById(auction._id);
+    expect(freshAuction?.state).toBe('closed');
+    expect(await AuctionResult.countDocuments({ auctionId: auction._id })).toBe(1);
+    expect(await Notification.countDocuments()).toBe(2);
   });
 });

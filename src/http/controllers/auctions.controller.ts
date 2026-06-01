@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import { Auction } from '../../domain/auctions/auction.model';
 import { Bid } from '../../domain/auctions/bid.model';
 import { Audit } from '../../domain/audit/audit.model';
+import { createPostAuctionFlow } from '../../domain/auctions/auctionClose.service';
 import { emitAuctionBidAccepted, emitAuctionStateChanged } from '../../realtime/socket';
 
 function asNum(v: any, def: number) {
@@ -180,6 +181,8 @@ export async function closeAuction(req: Request, res: Response) {
     entityId: doc._id,
     payload: { to: 'closed' },
   });
+
+  await createPostAuctionFlow(doc);
 
   emitAuctionStateChanged(String(doc._id), stateChangedPayload(doc));
 
