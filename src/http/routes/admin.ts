@@ -4,6 +4,8 @@ import { requireRole } from '../middlewares/requireRole';
 import { AuctionResultStatus, AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
+import { InvoiceRecord } from '../../domain/invoiceRecords/invoiceRecord.model';
+import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
 import { InvoiceQueue } from '../../domain/invoiceQueue/invoiceQueue.model';
 import { recoverFiscalTransaction } from '../../domain/fiscalRecovery/fiscalRecovery.service';
 import { evaluateFiscalReadiness } from '../../domain/fiscalReadiness/fiscalReadiness.service';
@@ -24,6 +26,7 @@ const transactionStatuses: TransactionStatus[] = [
   'invoiced',
   'cancelled',
 ];
+const invoiceRecordStatuses = ['created', 'processing', 'completed', 'failed'];
 
 function parsePagination(query: any) {
   const page = Math.max(1, Number(query.page) || 1);
@@ -43,6 +46,73 @@ function addObjectIdFilter(filter: Record<string, unknown>, key: string, value: 
 // Solo admin y super
 router.get('/ping', requireAuth, requireRole('admin', 'super'), (_req, res) => {
   res.json({ ok: true, area: 'admin', ts: new Date().toISOString() });
+});
+
+router.post('/fiscal/queue/process-next', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const user = (req as any).user;
+  const result = await processInvoiceQueue({ actor: user?.sub });
+
+  if (!result.ok) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+
+  res.json({
+    invoiceQueue: result.invoiceQueue,
+    invoiceRecord: result.invoiceRecord,
+  });
+});
+
+router.post('/fiscal/queue/:id/process', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const user = (req as any).user;
+  const result = await processInvoiceQueue({
+    invoiceQueueId: String(req.params.id),
+    actor: user?.sub,
+  });
+
+  if (!result.ok) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+
+  res.json({
+    invoiceQueue: result.invoiceQueue,
+    invoiceRecord: result.invoiceRecord,
+  });
+});
+
+router.get('/fiscal/invoice-records', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const status = typeof req.query.status === 'string' ? req.query.status : '';
+  const { page, limit } = parsePagination(req.query);
+  const filter: Record<string, unknown> = {};
+
+  if (status && invoiceRecordStatuses.includes(status)) {
+    filter.status = status;
+  }
+
+  for (const key of ['transactionId', 'invoiceQueueId']) {
+    if (!addObjectIdFilter(filter, key, req.query[key])) {
+      return res.status(400).json({ error: `Invalid ${key}` });
+    }
+  }
+
+  const items = await InvoiceRecord.find(filter)
+    .sort({ createdAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .lean();
+
+  res.json({ page, limit, items });
+});
+
+router.get('/fiscal/invoice-records/:id', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid invoice record id' });
+  }
+
+  const record = await InvoiceRecord.findById(id).lean();
+  if (!record) return res.status(404).json({ error: 'Not found' });
+
+  res.json(record);
 });
 
 router.get('/fiscal/transactions', requireAuth, requireRole('admin', 'super'), async (req, res) => {
