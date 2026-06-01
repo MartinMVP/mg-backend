@@ -583,4 +583,220 @@ describe('admin fiscal invoice processing', () => {
       'INVOICE_PROCESSING_MAX_ATTEMPTS_REACHED',
     ]));
   });
+
+  it('protects processing monitoring endpoints', async () => {
+    const token = await authToken('user');
+
+    const noAuth = await request(app).get('/admin/fiscal/processing/summary');
+    const userSummary = await request(app)
+      .get('/admin/fiscal/processing/summary')
+      .set('Authorization', bearer(token));
+    const userFailures = await request(app)
+      .get('/admin/fiscal/processing/failures')
+      .set('Authorization', bearer(token));
+    const userStuck = await request(app)
+      .get('/admin/fiscal/processing/stuck')
+      .set('Authorization', bearer(token));
+
+    expect(noAuth.status).toBe(401);
+    expect(userSummary.status).toBe(403);
+    expect(userFailures.status).toBe(403);
+    expect(userStuck.status).toBe(403);
+  });
+
+  it('allows admin and super to read processing summary', async () => {
+    const adminToken = await authToken('admin');
+    const superToken = await authToken('super');
+
+    const adminRes = await request(app)
+      .get('/admin/fiscal/processing/summary')
+      .set('Authorization', bearer(adminToken));
+    const superRes = await request(app)
+      .get('/admin/fiscal/processing/summary')
+      .set('Authorization', bearer(superToken));
+
+    expect(adminRes.status).toBe(200);
+    expect(superRes.status).toBe(200);
+  });
+
+  it('summarizes invoice queue and invoice record status counts', async () => {
+    const token = await authToken('admin');
+    const queued = await createQueuedInvoice('queued');
+    const processing = await createQueuedInvoice('processing');
+    const completed = await createQueuedInvoice('completed');
+    const cancelled = await createQueuedInvoice('cancelled');
+    await InvoiceRecord.create({
+      transactionId: queued.transaction._id,
+      invoiceDraftId: queued.draft._id,
+      invoiceQueueId: queued.queue._id,
+      status: 'created',
+      attempts: 0,
+    });
+    await InvoiceRecord.create({
+      transactionId: processing.transaction._id,
+      invoiceDraftId: processing.draft._id,
+      invoiceQueueId: processing.queue._id,
+      status: 'processing',
+      attempts: 1,
+    });
+    await InvoiceRecord.create({
+      transactionId: completed.transaction._id,
+      invoiceDraftId: completed.draft._id,
+      invoiceQueueId: completed.queue._id,
+      status: 'completed',
+      attempts: 2,
+      processedAt: new Date(),
+    });
+    await InvoiceRecord.create({
+      transactionId: cancelled.transaction._id,
+      invoiceDraftId: cancelled.draft._id,
+      invoiceQueueId: cancelled.queue._id,
+      status: 'failed',
+      attempts: 3,
+      lastError: 'Failed',
+    });
+    await InvoiceQueue.collection.updateOne(
+      { _id: processing.queue._id },
+      { $set: { updatedAt: new Date(Date.now() - 16 * 60_000) } }
+    );
+
+    const res = await request(app)
+      .get('/admin/fiscal/processing/summary')
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.invoiceQueue).toMatchObject({
+      queued: 1,
+      processing: 1,
+      completed: 1,
+      cancelled: 1,
+    });
+    expect(res.body.invoiceRecord).toMatchObject({
+      created: 1,
+      processing: 1,
+      completed: 1,
+      failed: 1,
+    });
+    expect(res.body.totalAttempts).toBe(6);
+    expect(res.body.failedRecords).toBe(1);
+    expect(res.body.queuesStuckProcessing).toBe(1);
+    expect(res.body.oldestQueuedAt).toBeTruthy();
+    expect(res.body.latestProcessedAt).toBeTruthy();
+  });
+
+  it('lists only failed invoice records with pagination', async () => {
+    const token = await authToken('admin');
+    const first = await createQueuedInvoice('processing');
+    const second = await createQueuedInvoice('processing');
+    const third = await createQueuedInvoice('processing');
+    await InvoiceRecord.create({
+      transactionId: first.transaction._id,
+      invoiceDraftId: first.draft._id,
+      invoiceQueueId: first.queue._id,
+      status: 'failed',
+      attempts: 1,
+      lastError: 'First',
+    });
+    await InvoiceRecord.create({
+      transactionId: second.transaction._id,
+      invoiceDraftId: second.draft._id,
+      invoiceQueueId: second.queue._id,
+      status: 'failed',
+      attempts: 2,
+      lastError: 'Second',
+    });
+    await InvoiceRecord.create({
+      transactionId: third.transaction._id,
+      invoiceDraftId: third.draft._id,
+      invoiceQueueId: third.queue._id,
+      status: 'completed',
+      attempts: 1,
+    });
+
+    const res = await request(app)
+      .get('/admin/fiscal/processing/failures?page=1&limit=1')
+      .set('Authorization', bearer(token));
+    const secondPage = await request(app)
+      .get('/admin/fiscal/processing/failures?page=2&limit=1')
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0].invoiceRecord.status).toBe('failed');
+    expect(res.body.items[0].invoiceQueue).toBeTruthy();
+    expect(res.body.items[0].transactionId).toBeTruthy();
+    expect(res.body.items[0].attempts).toBeGreaterThan(0);
+    expect(res.body.items[0].lastError).toBeTruthy();
+    expect(res.body.items[0].updatedAt).toBeTruthy();
+    expect(secondPage.status).toBe(200);
+    expect(secondPage.body.items).toHaveLength(1);
+    expect(secondPage.body.items[0].invoiceRecord.status).toBe('failed');
+  });
+
+  it('lists only old processing queues as stuck', async () => {
+    const token = await authToken('admin');
+    const oldProcessing = await createQueuedInvoice('processing');
+    const recentProcessing = await createQueuedInvoice('processing');
+    const queued = await createQueuedInvoice('queued');
+    await InvoiceQueue.collection.updateOne(
+      { _id: oldProcessing.queue._id },
+      { $set: { updatedAt: new Date(Date.now() - 16 * 60_000) } }
+    );
+    await InvoiceQueue.collection.updateOne(
+      { _id: recentProcessing.queue._id },
+      { $set: { updatedAt: new Date() } }
+    );
+    await InvoiceQueue.collection.updateOne(
+      { _id: queued.queue._id },
+      { $set: { updatedAt: new Date(Date.now() - 16 * 60_000) } }
+    );
+
+    const res = await request(app)
+      .get('/admin/fiscal/processing/stuck')
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0]._id).toBe(String(oldProcessing.queue._id));
+    expect(res.body.items[0].status).toBe('processing');
+  });
+
+  it('does not modify queues or records when reading monitoring endpoints', async () => {
+    const token = await authToken('admin');
+    const { queue, transaction, draft } = await createQueuedInvoice('processing');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'failed',
+      attempts: 2,
+      lastError: 'Still failed',
+    });
+    await InvoiceQueue.collection.updateOne(
+      { _id: queue._id },
+      { $set: { updatedAt: new Date(Date.now() - 16 * 60_000) } }
+    );
+
+    const beforeQueue = await InvoiceQueue.findById(queue._id).lean();
+    const beforeRecord = await InvoiceRecord.findById(record._id).lean();
+
+    await request(app)
+      .get('/admin/fiscal/processing/summary')
+      .set('Authorization', bearer(token));
+    await request(app)
+      .get('/admin/fiscal/processing/failures')
+      .set('Authorization', bearer(token));
+    await request(app)
+      .get('/admin/fiscal/processing/stuck')
+      .set('Authorization', bearer(token));
+
+    const afterQueue = await InvoiceQueue.findById(queue._id).lean();
+    const afterRecord = await InvoiceRecord.findById(record._id).lean();
+
+    expect(afterQueue?.status).toBe(beforeQueue?.status);
+    expect(afterQueue?.processedAt).toEqual(beforeQueue?.processedAt);
+    expect(afterRecord?.status).toBe(beforeRecord?.status);
+    expect(afterRecord?.attempts).toBe(beforeRecord?.attempts);
+    expect(afterRecord?.lastError).toBe(beforeRecord?.lastError);
+  });
 });

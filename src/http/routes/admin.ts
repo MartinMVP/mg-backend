@@ -28,6 +28,8 @@ const transactionStatuses: TransactionStatus[] = [
   'cancelled',
 ];
 const invoiceRecordStatuses = ['created', 'processing', 'completed', 'failed'];
+const invoiceQueueStatuses = ['queued', 'processing', 'completed', 'cancelled'];
+const STUCK_PROCESSING_THRESHOLD_MS = 15 * 60_000;
 
 function parsePagination(query: any) {
   const page = Math.max(1, Number(query.page) || 1);
@@ -44,9 +46,86 @@ function addObjectIdFilter(filter: Record<string, unknown>, key: string, value: 
   return true;
 }
 
+function countsFromAggregation(statuses: string[], rows: Array<{ _id: string; count: number }>) {
+  const counts = Object.fromEntries(statuses.map((status) => [status, 0]));
+  for (const row of rows) {
+    counts[row._id] = row.count;
+  }
+
+  return counts;
+}
+
 // Solo admin y super
 router.get('/ping', requireAuth, requireRole('admin', 'super'), (_req, res) => {
   res.json({ ok: true, area: 'admin', ts: new Date().toISOString() });
+});
+
+router.get('/fiscal/processing/summary', requireAuth, requireRole('admin', 'super'), async (_req, res) => {
+  const cutoff = new Date(Date.now() - STUCK_PROCESSING_THRESHOLD_MS);
+  const [
+    queueRows,
+    recordRows,
+    attemptsRows,
+    failedRecords,
+    queuesStuckProcessing,
+    oldestQueued,
+    latestProcessed,
+  ] = await Promise.all([
+    InvoiceQueue.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+    InvoiceRecord.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+    InvoiceRecord.aggregate([{ $group: { _id: null, total: { $sum: '$attempts' } } }]),
+    InvoiceRecord.countDocuments({ status: 'failed' }),
+    InvoiceQueue.countDocuments({ status: 'processing', updatedAt: { $lt: cutoff } }),
+    InvoiceQueue.findOne({ status: 'queued' }).sort({ queuedAt: 1 }).select('queuedAt').lean(),
+    InvoiceRecord.findOne({ processedAt: { $exists: true } }).sort({ processedAt: -1 }).select('processedAt').lean(),
+  ]);
+
+  res.json({
+    invoiceQueue: countsFromAggregation(invoiceQueueStatuses, queueRows),
+    invoiceRecord: countsFromAggregation(invoiceRecordStatuses, recordRows),
+    totalAttempts: attemptsRows[0]?.total || 0,
+    failedRecords,
+    queuesStuckProcessing,
+    oldestQueuedAt: oldestQueued?.queuedAt || null,
+    latestProcessedAt: latestProcessed?.processedAt || null,
+  });
+});
+
+router.get('/fiscal/processing/failures', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const { page, limit } = parsePagination(req.query);
+  const records = await InvoiceRecord.find({ status: 'failed' })
+    .sort({ updatedAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .lean();
+  const queueIds = records.map((record) => record.invoiceQueueId);
+  const queues = await InvoiceQueue.find({ _id: { $in: queueIds } }).lean();
+  const queuesById = new Map(queues.map((queue: any) => [String(queue._id), queue]));
+
+  res.json({
+    page,
+    limit,
+    items: records.map((record: any) => ({
+      invoiceRecord: record,
+      invoiceQueue: queuesById.get(String(record.invoiceQueueId)) || null,
+      transactionId: record.transactionId,
+      attempts: record.attempts,
+      lastError: record.lastError,
+      updatedAt: record.updatedAt,
+    })),
+  });
+});
+
+router.get('/fiscal/processing/stuck', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const { page, limit } = parsePagination(req.query);
+  const cutoff = new Date(Date.now() - STUCK_PROCESSING_THRESHOLD_MS);
+  const items = await InvoiceQueue.find({ status: 'processing', updatedAt: { $lt: cutoff } })
+    .sort({ updatedAt: 1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .lean();
+
+  res.json({ page, limit, items });
 });
 
 router.post('/fiscal/queue/process-next', requireAuth, requireRole('admin', 'super'), async (req, res) => {
