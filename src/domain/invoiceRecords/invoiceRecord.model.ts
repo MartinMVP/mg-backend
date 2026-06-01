@@ -6,6 +6,11 @@ export type InvoiceRecordStatus =
   | 'completed'
   | 'failed';
 
+export type InvoiceRecordLifecycleStatus =
+  | 'pending'
+  | 'issued'
+  | 'cancelled';
+
 export interface IInvoiceRecord {
   transactionId: Types.ObjectId;
   invoiceDraftId: Types.ObjectId;
@@ -14,6 +19,9 @@ export interface IInvoiceRecord {
   attempts: number;
   lastError?: string;
   processedAt?: Date;
+  issuedAt?: Date;
+  cancelledAt?: Date;
+  lifecycleStatus?: InvoiceRecordLifecycleStatus;
   providerName?: string;
   providerStatus?: string;
   providerMessage?: string;
@@ -40,6 +48,14 @@ const InvoiceRecordSchema = new Schema<IInvoiceRecord>(
     attempts: { type: Number, default: 0, min: 0 },
     lastError: { type: String, trim: true },
     processedAt: { type: Date },
+    issuedAt: { type: Date },
+    cancelledAt: { type: Date },
+    lifecycleStatus: {
+      type: String,
+      enum: ['pending', 'issued', 'cancelled'],
+      default: 'pending',
+      index: true,
+    },
     providerName: { type: String, trim: true },
     providerStatus: { type: String, trim: true },
     providerMessage: { type: String, trim: true },

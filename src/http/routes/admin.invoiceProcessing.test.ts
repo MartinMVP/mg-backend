@@ -1114,4 +1114,150 @@ describe('admin fiscal invoice processing', () => {
     expect(record?.lastError).toBe('Mock invoice issue failed');
     expect(record?.providerStatus).toBe('failed');
   });
+
+  it('issues a completed invoice record through the mock lifecycle', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      processedAt: new Date(),
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/issue`)
+      .set('Authorization', bearer(token));
+    const freshRecord = await InvoiceRecord.findById(record._id).lean();
+    const audit = await Audit.findOne({ action: 'INVOICE_ISSUED' });
+
+    expect(res.status).toBe(200);
+    expect(freshRecord?.lifecycleStatus).toBe('issued');
+    expect(freshRecord?.issuedAt).toBeTruthy();
+    expect(freshRecord?.providerName).toBe('mock');
+    expect(freshRecord?.providerStatus).toBe('issued');
+    expect(freshRecord?.providerMessage).toBe('Mock invoice issued');
+    expect(freshRecord?.simulatedExternalId).toBe(`mock-${String(queue._id)}`);
+    expect(audit).toBeTruthy();
+  });
+
+  it('blocks duplicate invoice record issue', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      lifecycleStatus: 'issued',
+      issuedAt: new Date(),
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/issue`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'Invoice record already issued' });
+  });
+
+  it('cancels an issued invoice record through the mock lifecycle', async () => {
+    const token = await authToken('super');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      lifecycleStatus: 'issued',
+      issuedAt: new Date(),
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/cancel`)
+      .set('Authorization', bearer(token));
+    const freshRecord = await InvoiceRecord.findById(record._id).lean();
+    const audit = await Audit.findOne({ action: 'INVOICE_CANCELLED' });
+
+    expect(res.status).toBe(200);
+    expect(freshRecord?.lifecycleStatus).toBe('cancelled');
+    expect(freshRecord?.cancelledAt).toBeTruthy();
+    expect(freshRecord?.providerName).toBe('mock');
+    expect(freshRecord?.providerStatus).toBe('cancelled');
+    expect(freshRecord?.providerMessage).toBe('Mock cancellation successful');
+    expect(audit).toBeTruthy();
+  });
+
+  it('blocks duplicate invoice record cancellation', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      lifecycleStatus: 'cancelled',
+      issuedAt: new Date(),
+      cancelledAt: new Date(),
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/cancel`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'Invoice record already cancelled' });
+  });
+
+  it('protects invoice record lifecycle endpoints', async () => {
+    const token = await authToken('user');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+    });
+
+    const noAuthIssue = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/issue`);
+    const userIssue = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/issue`)
+      .set('Authorization', bearer(token));
+    const userCancel = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/cancel`)
+      .set('Authorization', bearer(token));
+
+    expect(noAuthIssue.status).toBe(401);
+    expect(userIssue.status).toBe(403);
+    expect(userCancel.status).toBe(403);
+  });
+
+  it('returns lifecycle status in invoice record history', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      lifecycleStatus: 'issued',
+      issuedAt: new Date(),
+    });
+
+    const res = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/history`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.invoiceRecord.lifecycleStatus).toBe('issued');
+    expect(res.body.invoiceRecord.issuedAt).toBeTruthy();
+  });
 });

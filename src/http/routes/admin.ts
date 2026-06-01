@@ -4,6 +4,7 @@ import { requireRole } from '../middlewares/requireRole';
 import { AuctionResultStatus, AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { Audit } from '../../domain/audit/audit.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
+import { mockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceRecord } from '../../domain/invoiceRecords/invoiceRecord.model';
 import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
@@ -39,6 +40,8 @@ const invoiceAuditActions = [
   'INVOICE_PROCESSING_RETRY_REQUESTED',
   'INVOICE_QUEUE_CANCELLED',
   'INVOICE_QUEUE_RECOVERED',
+  'INVOICE_ISSUED',
+  'INVOICE_CANCELLED',
 ];
 
 function parsePagination(query: any) {
@@ -340,6 +343,111 @@ router.post('/fiscal/invoice-records/:id/retry', requireAuth, requireRole('admin
   await Audit.create({ actor: user?.sub || 'system', action: 'INVOICE_PROCESSING_RETRY_REQUESTED' });
 
   res.json({ invoiceQueue, invoiceRecord });
+});
+
+router.post('/fiscal/invoice-records/:id/issue', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const user = (req as any).user;
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid invoice record id' });
+  }
+
+  const record = await InvoiceRecord.findById(id);
+  if (!record) return res.status(404).json({ error: 'Not found' });
+  if (record.status !== 'completed') {
+    return res.status(409).json({ error: 'Invoice record is not completed' });
+  }
+  if (record.lifecycleStatus === 'issued') {
+    return res.status(409).json({ error: 'Invoice record already issued' });
+  }
+  if (record.lifecycleStatus === 'cancelled') {
+    return res.status(409).json({ error: 'Invoice record is cancelled' });
+  }
+
+  const issueResult = await mockFiscalProvider.issueInvoice({
+    transactionId: record.transactionId,
+    invoiceDraftId: record.invoiceDraftId,
+    invoiceQueueId: record.invoiceQueueId,
+  });
+  if (!issueResult.ok) {
+    return res.status(409).json({ error: issueResult.providerMessage });
+  }
+
+  const invoiceRecord = await InvoiceRecord.findOneAndUpdate(
+    {
+      _id: record._id,
+      status: 'completed',
+      $or: [
+        { lifecycleStatus: { $exists: false } },
+        { lifecycleStatus: 'pending' },
+      ],
+    },
+    {
+      $set: {
+        lifecycleStatus: 'issued',
+        issuedAt: new Date(),
+        providerName: mockFiscalProvider.name,
+        providerStatus: issueResult.providerStatus,
+        providerMessage: issueResult.providerMessage,
+        simulatedExternalId: issueResult.simulatedExternalId,
+      },
+    },
+    { new: true, runValidators: true }
+  );
+  if (!invoiceRecord) {
+    return res.status(409).json({ error: 'Invoice record cannot be issued' });
+  }
+
+  await Audit.create({ actor: user?.sub || 'system', action: 'INVOICE_ISSUED' });
+
+  res.json(invoiceRecord);
+});
+
+router.post('/fiscal/invoice-records/:id/cancel', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const user = (req as any).user;
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid invoice record id' });
+  }
+
+  const record = await InvoiceRecord.findById(id);
+  if (!record) return res.status(404).json({ error: 'Not found' });
+  if (record.lifecycleStatus === 'cancelled') {
+    return res.status(409).json({ error: 'Invoice record already cancelled' });
+  }
+  if (record.lifecycleStatus !== 'issued') {
+    return res.status(409).json({ error: 'Invoice record is not issued' });
+  }
+
+  const cancelResult = await mockFiscalProvider.cancelInvoice({
+    transactionId: record.transactionId,
+    invoiceDraftId: record.invoiceDraftId,
+    invoiceQueueId: record.invoiceQueueId,
+  });
+  if (!cancelResult.ok) {
+    return res.status(409).json({ error: cancelResult.providerMessage });
+  }
+
+  const invoiceRecord = await InvoiceRecord.findOneAndUpdate(
+    { _id: record._id, lifecycleStatus: 'issued' },
+    {
+      $set: {
+        lifecycleStatus: 'cancelled',
+        cancelledAt: new Date(),
+        providerName: mockFiscalProvider.name,
+        providerStatus: cancelResult.providerStatus,
+        providerMessage: cancelResult.providerMessage,
+      },
+    },
+    { new: true, runValidators: true }
+  );
+  if (!invoiceRecord) {
+    return res.status(409).json({ error: 'Invoice record cannot be cancelled' });
+  }
+
+  await Audit.create({ actor: user?.sub || 'system', action: 'INVOICE_CANCELLED' });
+
+  res.json(invoiceRecord);
 });
 
 router.get('/fiscal/invoice-records', requireAuth, requireRole('admin', 'super'), async (req, res) => {
