@@ -44,28 +44,29 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
     };
   }
 
-  await audit(actor, 'INVOICE_QUEUE_CLAIMED');
-
-  const record = await InvoiceRecord.findOneAndUpdate(
-    { invoiceQueueId: queue._id },
-    {
-      $setOnInsert: {
-        transactionId: queue.transactionId,
-        invoiceDraftId: queue.invoiceDraftId,
-        invoiceQueueId: queue._id,
-      },
-      $set: {
-        status: 'processing',
-        lastError: undefined,
-      },
-      $inc: { attempts: 1 },
-    },
-    { new: true, upsert: true, runValidators: true }
-  );
-
-  await audit(actor, 'INVOICE_PROCESSING_STARTED');
-
+  let record: any = null;
   try {
+    await audit(actor, 'INVOICE_QUEUE_CLAIMED');
+
+    record = await InvoiceRecord.findOneAndUpdate(
+      { invoiceQueueId: queue._id },
+      {
+        $setOnInsert: {
+          transactionId: queue.transactionId,
+          invoiceDraftId: queue.invoiceDraftId,
+          invoiceQueueId: queue._id,
+        },
+        $set: {
+          status: 'processing',
+        },
+        $unset: { lastError: '' },
+        $inc: { attempts: 1 },
+      },
+      { new: true, upsert: true, runValidators: true }
+    );
+
+    await audit(actor, 'INVOICE_PROCESSING_STARTED');
+
     const now = new Date();
     const [completedQueue, completedRecord] = await Promise.all([
       InvoiceQueue.findByIdAndUpdate(
@@ -89,17 +90,29 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
     };
   } catch (error: any) {
     const message = error?.message || 'Invoice processing failed';
+    const failedRecordUpdate: any = {
+      $setOnInsert: {
+        transactionId: queue.transactionId,
+        invoiceDraftId: queue.invoiceDraftId,
+        invoiceQueueId: queue._id,
+      },
+      $set: { status: 'failed', lastError: message },
+    };
 
-    const failedRecord = await InvoiceRecord.findByIdAndUpdate(
-      record._id,
-      { $set: { status: 'failed', lastError: message } },
-      { new: true, runValidators: true }
-    );
-    const resetQueue = await InvoiceQueue.findByIdAndUpdate(
-      queue._id,
-      { $set: { status: 'queued' } },
-      { new: true, runValidators: true }
-    );
+    if (!record) failedRecordUpdate.$inc = { attempts: 1 };
+
+    const [resetQueue, failedRecord] = await Promise.all([
+      InvoiceQueue.findByIdAndUpdate(
+        queue._id,
+        { $set: { status: 'queued' } },
+        { new: true, runValidators: true }
+      ),
+      InvoiceRecord.findOneAndUpdate(
+        { invoiceQueueId: queue._id },
+        failedRecordUpdate,
+        { new: true, upsert: true, runValidators: true }
+      ),
+    ]);
 
     await audit(actor, 'INVOICE_PROCESSING_FAILED');
 

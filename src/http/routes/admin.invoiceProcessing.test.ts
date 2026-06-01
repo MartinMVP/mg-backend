@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Types } from 'mongoose';
 import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { Audit } from '../../domain/audit/audit.model';
@@ -16,6 +16,10 @@ describe('admin fiscal invoice processing', () => {
 
   beforeAll(async () => {
     app = (await import('../../app')).default;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   async function authToken(role: 'user' | 'admin' | 'super' = 'admin') {
@@ -224,6 +228,73 @@ describe('admin fiscal invoice processing', () => {
       'INVOICE_PROCESSING_STARTED',
       'INVOICE_PROCESSING_COMPLETED',
     ]));
+  });
+
+  it('marks record failed, resets queue, stores lastError, and audits failed when processing throws during audit', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice();
+    vi.spyOn(Audit, 'create').mockRejectedValueOnce(new Error('Audit unavailable'));
+
+    const res = await request(app)
+      .post(`/admin/fiscal/queue/${queue._id}/process`)
+      .set('Authorization', bearer(token));
+
+    const freshQueue = await InvoiceQueue.findById(queue._id);
+    const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id });
+    const failedAudit = await Audit.findOne({ action: 'INVOICE_PROCESSING_FAILED' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Audit unavailable');
+    expect(freshQueue?.status).toBe('queued');
+    expect(record?.status).toBe('failed');
+    expect(record?.attempts).toBe(1);
+    expect(record?.lastError).toBe('Audit unavailable');
+    expect(failedAudit).toBeTruthy();
+  });
+
+  it('marks record failed and resets queue when invoice record creation throws', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice();
+    vi.spyOn(InvoiceRecord, 'findOneAndUpdate').mockRejectedValueOnce(new Error('Record unavailable'));
+
+    const res = await request(app)
+      .post(`/admin/fiscal/queue/${queue._id}/process`)
+      .set('Authorization', bearer(token));
+
+    const freshQueue = await InvoiceQueue.findById(queue._id);
+    const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id });
+    const failedAudit = await Audit.findOne({ action: 'INVOICE_PROCESSING_FAILED' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Record unavailable');
+    expect(freshQueue?.status).toBe('queued');
+    expect(record?.status).toBe('failed');
+    expect(record?.attempts).toBe(1);
+    expect(record?.lastError).toBe('Record unavailable');
+    expect(failedAudit).toBeTruthy();
+  });
+
+  it('cleans lastError on retry after a failed processing attempt', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice();
+    vi.spyOn(InvoiceRecord, 'findOneAndUpdate').mockRejectedValueOnce(new Error('First attempt failed'));
+
+    const first = await request(app)
+      .post(`/admin/fiscal/queue/${queue._id}/process`)
+      .set('Authorization', bearer(token));
+    const second = await request(app)
+      .post(`/admin/fiscal/queue/${queue._id}/process`)
+      .set('Authorization', bearer(token));
+
+    const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id }).lean();
+    const freshQueue = await InvoiceQueue.findById(queue._id);
+
+    expect(first.status).toBe(500);
+    expect(second.status).toBe(200);
+    expect(freshQueue?.status).toBe('completed');
+    expect(record?.status).toBe('completed');
+    expect(record?.attempts).toBe(2);
+    expect(record?.lastError).toBeUndefined();
   });
 
   it('lists invoice records', async () => {
