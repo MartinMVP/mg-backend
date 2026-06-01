@@ -2,6 +2,7 @@ import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Types } from 'mongoose';
 import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
+import { FiscalProfile } from '../../domain/fiscalProfiles/fiscalProfile.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceQueue } from '../../domain/invoiceQueue/invoiceQueue.model';
@@ -636,7 +637,7 @@ describe('POST /admin/fiscal/transactions/:id/queue', () => {
       .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
       .set('Authorization', bearer(token));
 
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       transactionId: String(transaction._id),
       status: 'queued',
@@ -657,7 +658,7 @@ describe('POST /admin/fiscal/transactions/:id/queue', () => {
       .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
       .set('Authorization', bearer(token));
 
-    expect(first.status).toBe(201);
+    expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect(second.body._id).toBe(first.body._id);
     expect(await InvoiceQueue.countDocuments({ transactionId: transaction._id })).toBe(1);
@@ -671,7 +672,246 @@ describe('POST /admin/fiscal/transactions/:id/queue', () => {
       .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
       .set('Authorization', bearer(token));
 
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
     expect(res.body.status).toBe('queued');
+  });
+
+  it('is safe when queue requests run concurrently', async () => {
+    const token = await authToken('admin');
+    const transaction = await createQueueCandidate();
+
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        request(app)
+          .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
+          .set('Authorization', bearer(token))
+      )
+    );
+
+    expect(responses.every((res) => res.status === 200)).toBe(true);
+    expect(new Set(responses.map((res) => res.body._id)).size).toBe(1);
+    expect(await InvoiceQueue.countDocuments({ transactionId: transaction._id })).toBe(1);
+  });
+});
+
+describe('POST /admin/fiscal/transactions/:id/recover', () => {
+  let app: typeof import('../../app').default;
+
+  beforeAll(async () => {
+    app = (await import('../../app')).default;
+  });
+
+  async function authToken(role: 'user' | 'admin' | 'super' = 'admin') {
+    const user = await createTestUser(role);
+    return createAccessToken(String(user._id), role);
+  }
+
+  const completeSnapshotProfile = {
+    rfc: 'XAXX010101000',
+    razonSocial: 'Rancho Fiscal SA de CV',
+    regimenFiscal: '601',
+    codigoPostal: '83000',
+    usoCFDI: 'G03',
+    emailFacturacion: 'facturas@rancho.test',
+  };
+
+  async function createPendingRecoveryCandidate(options: {
+    buyerFiscalProfile?: Record<string, unknown> | null;
+    sellerFiscalProfile?: Record<string, unknown> | null;
+  } = {}) {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const listing = await createTestListing(seller._id);
+    const auction = await createLiveAuction({
+      listing: listing._id,
+      state: 'closed',
+      currentWinner: buyer._id,
+      currentPrice: 7000,
+      endsAt: new Date(Date.now() - 60_000),
+    });
+    const result = await AuctionResult.create({
+      auctionId: auction._id,
+      listingId: listing._id,
+      sellerId: seller._id,
+      buyerId: buyer._id,
+      finalPrice: 7000,
+      closedAt: new Date(),
+      status: 'sale_confirmed',
+    });
+    const transaction = await Transaction.create({
+      auctionResultId: result._id,
+      buyerId: buyer._id,
+      sellerId: seller._id,
+      amount: 7000,
+      status: 'pending',
+    });
+    const fiscalSnapshot = await FiscalSnapshot.create({
+      transactionId: transaction._id,
+      auctionResultId: result._id,
+      buyerId: buyer._id,
+      sellerId: seller._id,
+      buyerFiscalProfile: options.buyerFiscalProfile ?? null,
+      sellerFiscalProfile: options.sellerFiscalProfile ?? null,
+      amount: 7000,
+      currency: 'MXN',
+    });
+
+    return { buyer, seller, transaction, fiscalSnapshot };
+  }
+
+  async function createFiscalProfile(userId: any) {
+    return FiscalProfile.create({
+      userId,
+      rfc: 'XAXX010101000',
+      razonSocial: 'Rancho Fiscal SA de CV',
+      regimenFiscal: '601',
+      codigoPostal: '83000',
+      usoCFDI: 'G03',
+      emailFacturacion: 'facturas@rancho.test',
+    });
+  }
+
+  it('returns 403 for role user', async () => {
+    const token = await authToken('user');
+    const { transaction } = await createPendingRecoveryCandidate();
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/recover`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'Forbidden' });
+  });
+
+  it('keeps transaction pending when snapshot profiles are still missing', async () => {
+    const token = await authToken('admin');
+    const { transaction } = await createPendingRecoveryCandidate();
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/recover`)
+      .set('Authorization', bearer(token));
+
+    const freshTransaction = await Transaction.findById(transaction._id);
+    const invoiceDraft = await InvoiceDraft.findOne({ transactionId: transaction._id });
+
+    expect(res.status).toBe(409);
+    expect(res.body.recovery.recovered).toBe(false);
+    expect(res.body.recovery.issues).toEqual([
+      'fiscal_snapshot_buyer_profile_missing',
+      'fiscal_snapshot_seller_profile_missing',
+    ]);
+    expect(freshTransaction?.status).toBe('pending');
+    expect(invoiceDraft).toBeNull();
+  });
+
+  it('does not recover when current profiles are complete but snapshot is incomplete', async () => {
+    const token = await authToken('admin');
+    const { buyer, seller, transaction } = await createPendingRecoveryCandidate();
+    await createFiscalProfile(buyer._id);
+    await createFiscalProfile(seller._id);
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/recover`)
+      .set('Authorization', bearer(token));
+
+    const freshTransaction = await Transaction.findById(transaction._id);
+    const invoiceDraft = await InvoiceDraft.findOne({ transactionId: transaction._id });
+
+    expect(res.status).toBe(409);
+    expect(res.body.recovery.recovered).toBe(false);
+    expect(res.body.recovery.issues).toEqual([
+      'fiscal_snapshot_buyer_profile_missing',
+      'fiscal_snapshot_seller_profile_missing',
+    ]);
+    expect(freshTransaction?.status).toBe('pending');
+    expect(invoiceDraft).toBeNull();
+  });
+
+  it('promotes a pending transaction to ready_for_invoice when snapshot profiles are complete', async () => {
+    const token = await authToken('admin');
+    const { transaction } = await createPendingRecoveryCandidate({
+      buyerFiscalProfile: completeSnapshotProfile,
+      sellerFiscalProfile: completeSnapshotProfile,
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/recover`)
+      .set('Authorization', bearer(token));
+
+    const freshTransaction = await Transaction.findById(transaction._id);
+
+    expect(res.status).toBe(200);
+    expect(res.body.recovery.recovered).toBe(true);
+    expect(freshTransaction?.status).toBe('ready_for_invoice');
+  });
+
+  it('creates an invoice draft during recovery', async () => {
+    const token = await authToken('admin');
+    const { transaction, fiscalSnapshot } = await createPendingRecoveryCandidate({
+      buyerFiscalProfile: completeSnapshotProfile,
+      sellerFiscalProfile: completeSnapshotProfile,
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/recover`)
+      .set('Authorization', bearer(token));
+
+    const invoiceDraft = await InvoiceDraft.findOne({ transactionId: transaction._id });
+
+    expect(res.status).toBe(200);
+    expect(invoiceDraft).toBeTruthy();
+    expect(invoiceDraft?.status).toBe('ready');
+    expect(String(invoiceDraft?.fiscalSnapshotId)).toBe(String(fiscalSnapshot._id));
+  });
+
+  it('does not create an invoice draft when snapshot is incomplete', async () => {
+    const token = await authToken('admin');
+    const { buyer, seller, transaction } = await createPendingRecoveryCandidate();
+    await createFiscalProfile(buyer._id);
+    await createFiscalProfile(seller._id);
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/recover`)
+      .set('Authorization', bearer(token));
+
+    const invoiceDraft = await InvoiceDraft.findOne({ transactionId: transaction._id });
+
+    expect(res.status).toBe(409);
+    expect(invoiceDraft).toBeNull();
+  });
+
+  it('does not modify the existing fiscal snapshot', async () => {
+    const token = await authToken('admin');
+    const { transaction, fiscalSnapshot } = await createPendingRecoveryCandidate({
+      buyerFiscalProfile: completeSnapshotProfile,
+      sellerFiscalProfile: completeSnapshotProfile,
+    });
+    const before = await FiscalSnapshot.findById(fiscalSnapshot._id).lean();
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/recover`)
+      .set('Authorization', bearer(token));
+
+    const after = await FiscalSnapshot.findById(fiscalSnapshot._id).lean();
+
+    expect(res.status).toBe(200);
+    expect(after?.buyerFiscalProfile).toEqual(before?.buyerFiscalProfile);
+    expect(after?.sellerFiscalProfile).toEqual(before?.sellerFiscalProfile);
+    expect(after?.amount).toBe(before?.amount);
+  });
+
+  it('allows admin to recover a fiscal transaction', async () => {
+    const token = await authToken('admin');
+    const { transaction } = await createPendingRecoveryCandidate({
+      buyerFiscalProfile: completeSnapshotProfile,
+      sellerFiscalProfile: completeSnapshotProfile,
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/recover`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.transactionId).toBe(String(transaction._id));
   });
 });

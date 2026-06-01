@@ -5,6 +5,7 @@ import { AuctionResultStatus, AuctionResult } from '../../domain/auctionResults/
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceQueue } from '../../domain/invoiceQueue/invoiceQueue.model';
+import { recoverFiscalTransaction } from '../../domain/fiscalRecovery/fiscalRecovery.service';
 import { evaluateFiscalReadiness } from '../../domain/fiscalReadiness/fiscalReadiness.service';
 import { Transaction, TransactionStatus } from '../../domain/transactions/transaction.model';
 import { Types } from 'mongoose';
@@ -118,12 +119,6 @@ router.post('/fiscal/transactions/:id/queue', requireAuth, requireRole('admin', 
     return res.status(409).json({ error: 'Transaction is not ready for invoice queue', readiness });
   }
 
-  const existingQueue = await InvoiceQueue.findOne({
-    transactionId: transaction._id,
-    status: { $in: ['queued', 'processing'] },
-  }).lean();
-  if (existingQueue) return res.status(200).json(existingQueue);
-
   const [fiscalSnapshot, invoiceDraft] = await Promise.all([
     FiscalSnapshot.findOne({ transactionId: transaction._id }).lean(),
     InvoiceDraft.findOne({ transactionId: transaction._id }).lean(),
@@ -133,15 +128,41 @@ router.post('/fiscal/transactions/:id/queue', requireAuth, requireRole('admin', 
     return res.status(409).json({ error: 'Transaction is not ready for invoice queue', readiness });
   }
 
-  const queue = await InvoiceQueue.create({
-    transactionId: transaction._id,
-    invoiceDraftId: invoiceDraft._id,
-    fiscalSnapshotId: fiscalSnapshot._id,
-    status: 'queued',
-    queuedAt: new Date(),
-  });
+  const queue = await InvoiceQueue.findOneAndUpdate(
+    {
+      transactionId: transaction._id,
+      status: { $in: ['queued', 'processing'] },
+    },
+    {
+      $setOnInsert: {
+        transactionId: transaction._id,
+        invoiceDraftId: invoiceDraft._id,
+        fiscalSnapshotId: fiscalSnapshot._id,
+        status: 'queued',
+        queuedAt: new Date(),
+      },
+    },
+    { new: true, upsert: true, runValidators: true }
+  );
 
-  res.status(201).json(queue);
+  res.json(queue);
+});
+
+router.post('/fiscal/transactions/:id/recover', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid transaction id' });
+  }
+
+  const exists = await Transaction.exists({ _id: id });
+  if (!exists) return res.status(404).json({ error: 'Not found' });
+
+  const recovery = await recoverFiscalTransaction(id);
+
+  res.status(recovery.recovered ? 200 : 409).json({
+    transactionId: id,
+    recovery,
+  });
 });
 
 router.get('/fiscal/transactions/:id', requireAuth, requireRole('admin', 'super'), async (req, res) => {
