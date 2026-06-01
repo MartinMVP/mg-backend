@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
+import { FiscalProfile } from '../../domain/fiscalProfiles/fiscalProfile.model';
 import { bearer, createAccessToken } from '../../test/helpers/auth';
 import { createLiveAuction, createTestListing, createTestUser } from '../../test/helpers/factories';
 
@@ -92,4 +93,99 @@ describe('account auction results routes', () => {
       expect(res.status).toBe(401);
     }
   );
+});
+
+describe('account fiscal profile routes', () => {
+  let app: typeof import('../../app').default;
+
+  beforeAll(async () => {
+    app = (await import('../../app')).default;
+  });
+
+  const fiscalPayload = {
+    rfc: 'XAXX010101000',
+    razonSocial: 'Rancho Fiscal SA de CV',
+    regimenFiscal: '601',
+    codigoPostal: '83000',
+    usoCFDI: 'G03',
+  };
+
+  it('allows a user to create a fiscal profile', async () => {
+    const user = await createTestUser('user');
+    const token = createAccessToken(String(user._id), 'user');
+
+    const res = await request(app)
+      .post('/account/fiscal-profile')
+      .set('Authorization', bearer(token))
+      .send(fiscalPayload);
+
+    const stored = await FiscalProfile.findOne({ userId: user._id });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject(fiscalPayload);
+    expect(stored).toBeTruthy();
+    expect(stored?.rfc).toBe(fiscalPayload.rfc);
+  });
+
+  it('allows a user to update a fiscal profile', async () => {
+    const user = await createTestUser('user');
+    const token = createAccessToken(String(user._id), 'user');
+
+    await request(app)
+      .post('/account/fiscal-profile')
+      .set('Authorization', bearer(token))
+      .send(fiscalPayload);
+
+    const res = await request(app)
+      .post('/account/fiscal-profile')
+      .set('Authorization', bearer(token))
+      .send({
+        ...fiscalPayload,
+        razonSocial: 'Rancho Actualizado SA de CV',
+        codigoPostal: '83100',
+      });
+
+    const count = await FiscalProfile.countDocuments({ userId: user._id });
+
+    expect(res.status).toBe(200);
+    expect(res.body.razonSocial).toBe('Rancho Actualizado SA de CV');
+    expect(res.body.codigoPostal).toBe('83100');
+    expect(count).toBe(1);
+  });
+
+  it('allows a user to get their fiscal profile', async () => {
+    const user = await createTestUser('user');
+    const token = createAccessToken(String(user._id), 'user');
+
+    await FiscalProfile.create({
+      userId: user._id,
+      ...fiscalPayload,
+    });
+
+    const res = await request(app)
+      .get('/account/fiscal-profile')
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject(fiscalPayload);
+    expect(res.body.userId).toBe(String(user._id));
+  });
+
+  it('does not expose another user fiscal profile', async () => {
+    const user = await createTestUser('user');
+    const other = await createTestUser('user');
+    const token = createAccessToken(String(user._id), 'user');
+
+    await FiscalProfile.create({
+      userId: other._id,
+      ...fiscalPayload,
+    });
+
+    const res = await request(app)
+      .get('/account/fiscal-profile')
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toBeNull();
+  });
 });
