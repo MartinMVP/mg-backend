@@ -3,6 +3,11 @@ import cookieParser from 'cookie-parser';
 import { env } from './env';
 import { Request, Response, NextFunction } from 'express';
 
+export function isAllowedOrigin(origin: string | undefined, allowlist: string[]) {
+  if (!origin) return false;
+  return allowlist.includes(origin);
+}
+
 export function securityMiddleware(app: any) {
   const allowlist = env.corsOrigin; // ['https://mg-frontend.onrender.com','http://localhost:5173']
 
@@ -12,7 +17,7 @@ export function securityMiddleware(app: any) {
 
     res.removeHeader('Access-Control-Allow-Origin'); // por si alguien lo puso antes
 
-    if (origin && allowlist.some(o => origin.startsWith(o))) {
+    if (origin && isAllowedOrigin(origin, allowlist)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
       res.setHeader('Access-Control-Allow-Credentials', 'true');

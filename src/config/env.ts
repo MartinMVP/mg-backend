@@ -1,34 +1,50 @@
 import 'dotenv/config';
 
-function parseBool(v: string | undefined, def = false) {
+export function parseBool(v: string | undefined, def = false) {
   if (v === undefined) return def;
   return ['1','true','yes','on'].includes(String(v).toLowerCase());
 }
 
-function parseCsv(v: string | undefined): string[] {
+export function parseCsv(v: string | undefined): string[] {
   if (!v) return [];
-  return v.split(',').map(s => s.trim()).filter(Boolean);
+  return v.split(/[;,]/).map(s => s.trim()).filter(Boolean);
 }
 
-export const env = {
-  nodeEnv: process.env.NODE_ENV ?? 'development',
-  port: Number(process.env.PORT ?? 8080),
+function readRequiredEnv(source: NodeJS.ProcessEnv, key: string, nodeEnv: string) {
+  const value = source[key]?.trim();
 
-  mongoUri: process.env.MONGODB_URI ?? '',
+  if (!value && nodeEnv === 'production') {
+    throw new Error(`Missing required environment variable: ${key}`);
+  }
 
-  // JWT (ya los tenías)
-  jwtAccessSecret: process.env.JWT_ACCESS_SECRET ?? '',
-  jwtRefreshSecret: process.env.JWT_REFRESH_SECRET ?? '',
+  return value ?? '';
+}
 
-  // TTLs (el hardening usa ms("<duración>"))
-  accessTtl: process.env.JWT_ACCESS_TTL ?? '15m',
-  refreshTtl: process.env.JWT_REFRESH_TTL ?? '7d',
+export function createEnv(source: NodeJS.ProcessEnv = process.env) {
+  const nodeEnv = source.NODE_ENV ?? 'development';
 
-  // CORS y cookies
-  corsOrigin: parseCsv(process.env.CORS_ORIGIN), // lista de orígenes permitidos
-  cookieSecure: parseBool(process.env.COOKIE_SECURE, false),
+  return {
+    nodeEnv,
+    port: Number(source.PORT ?? 8080),
 
-  // Swagger
-  swaggerEnabled: parseBool(process.env.SWAGGER_ENABLED, true),
-  swaggerRoute: process.env.SWAGGER_ROUTE ?? '/docs',
-};
+    mongoUri: readRequiredEnv(source, 'MONGODB_URI', nodeEnv),
+
+    // JWT (ya los tenías)
+    jwtAccessSecret: readRequiredEnv(source, 'JWT_ACCESS_SECRET', nodeEnv),
+    jwtRefreshSecret: readRequiredEnv(source, 'JWT_REFRESH_SECRET', nodeEnv),
+
+    // TTLs (el hardening usa ms("<duración>"))
+    accessTtl: source.JWT_ACCESS_TTL ?? '15m',
+    refreshTtl: source.JWT_REFRESH_TTL ?? '7d',
+
+    // CORS y cookies
+    corsOrigin: parseCsv(source.CORS_ORIGIN), // lista de orígenes permitidos
+    cookieSecure: parseBool(source.COOKIE_SECURE, false),
+
+    // Swagger
+    swaggerEnabled: parseBool(source.SWAGGER_ENABLED, true),
+    swaggerRoute: source.SWAGGER_ROUTE ?? '/docs',
+  };
+}
+
+export const env = createEnv();
