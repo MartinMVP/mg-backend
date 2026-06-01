@@ -4,6 +4,7 @@ import { requireRole } from '../middlewares/requireRole';
 import { AuctionResultStatus, AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
+import { evaluateFiscalReadiness } from '../../domain/fiscalReadiness/fiscalReadiness.service';
 import { Transaction, TransactionStatus } from '../../domain/transactions/transaction.model';
 import { Types } from 'mongoose';
 
@@ -82,6 +83,23 @@ router.get('/fiscal/transactions', requireAuth, requireRole('admin', 'super'), a
       fiscalSnapshot: snapshotsByTransaction.get(String(transaction._id)) || null,
       invoiceDraft: draftsByTransaction.get(String(transaction._id)) || null,
     })),
+  });
+});
+
+router.get('/fiscal/transactions/:id/readiness', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid transaction id' });
+  }
+
+  const exists = await Transaction.exists({ _id: id });
+  if (!exists) return res.status(404).json({ error: 'Not found' });
+
+  const readiness = await evaluateFiscalReadiness(id);
+
+  res.json({
+    transactionId: id,
+    readiness,
   });
 });
 

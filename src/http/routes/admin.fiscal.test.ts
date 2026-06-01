@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { Types } from 'mongoose';
 import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
@@ -232,5 +233,255 @@ describe('GET /admin/fiscal/transactions/:id', () => {
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'Not found' });
+  });
+});
+
+describe('GET /admin/fiscal/transactions/:id/readiness', () => {
+  let app: typeof import('../../app').default;
+
+  beforeAll(async () => {
+    app = (await import('../../app')).default;
+  });
+
+  async function createFiscalTransactionForReadiness(options: {
+    transactionStatus?: TransactionStatus;
+    invoiceDraftStatus?: 'draft' | 'ready' | 'blocked' | 'cancelled';
+    withSnapshot?: boolean;
+    withInvoiceDraft?: boolean;
+    buyerFiscalProfile?: Record<string, unknown> | null;
+    sellerFiscalProfile?: Record<string, unknown> | null;
+  } = {}) {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const listing = await createTestListing(seller._id);
+    const auction = await createLiveAuction({
+      listing: listing._id,
+      state: 'closed',
+      currentWinner: buyer._id,
+      currentPrice: 5000,
+      endsAt: new Date(Date.now() - 60_000),
+    });
+    const result = await AuctionResult.create({
+      auctionId: auction._id,
+      listingId: listing._id,
+      sellerId: seller._id,
+      buyerId: buyer._id,
+      finalPrice: 5000,
+      closedAt: new Date(),
+      status: 'sale_confirmed',
+    });
+    const transaction = await Transaction.create({
+      auctionResultId: result._id,
+      buyerId: buyer._id,
+      sellerId: seller._id,
+      amount: 5000,
+      status: options.transactionStatus || 'ready_for_invoice',
+    });
+    const defaultProfile = {
+      rfc: 'MGRFCREADY12',
+      razonSocial: 'Mercado Ganadero Test',
+      regimenFiscal: '601',
+      codigoPostal: '83000',
+      usoCFDI: 'G03',
+      emailFacturacion: 'facturacion@mg.test',
+    };
+    let fiscalSnapshot: any = null;
+
+    if (options.withSnapshot !== false) {
+      fiscalSnapshot = await FiscalSnapshot.create({
+        transactionId: transaction._id,
+        auctionResultId: result._id,
+        buyerId: buyer._id,
+        sellerId: seller._id,
+        buyerFiscalProfile: options.buyerFiscalProfile === undefined ? defaultProfile : options.buyerFiscalProfile,
+        sellerFiscalProfile: options.sellerFiscalProfile === undefined ? defaultProfile : options.sellerFiscalProfile,
+        amount: 5000,
+        currency: 'MXN',
+      });
+    }
+
+    if (options.withInvoiceDraft !== false && fiscalSnapshot) {
+      await InvoiceDraft.create({
+        transactionId: transaction._id,
+        fiscalSnapshotId: fiscalSnapshot._id,
+        auctionResultId: result._id,
+        buyerId: buyer._id,
+        sellerId: seller._id,
+        amount: 5000,
+        currency: 'MXN',
+        status: options.invoiceDraftStatus || 'ready',
+        createdFromTransaction: true,
+      });
+    }
+
+    return transaction;
+  }
+
+  async function authToken(role: 'user' | 'admin' | 'super' = 'admin') {
+    const user = await createTestUser(role);
+    return createAccessToken(String(user._id), role);
+  }
+
+  it('returns 401 without auth', async () => {
+    const transaction = await createFiscalTransactionForReadiness();
+
+    const res = await request(app).get(`/admin/fiscal/transactions/${transaction._id}/readiness`);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 for role user', async () => {
+    const token = await authToken('user');
+    const transaction = await createFiscalTransactionForReadiness();
+
+    const res = await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/readiness`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'Forbidden' });
+  });
+
+  it('allows admin to evaluate readiness', async () => {
+    const token = await authToken('admin');
+    const transaction = await createFiscalTransactionForReadiness();
+
+    const res = await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/readiness`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.transactionId).toBe(String(transaction._id));
+  });
+
+  it('returns 404 when transaction does not exist', async () => {
+    const token = await authToken('admin');
+
+    const res = await request(app)
+      .get(`/admin/fiscal/transactions/${new Types.ObjectId()}/readiness`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Not found' });
+  });
+
+  it('returns blocked when transaction is cancelled', async () => {
+    const token = await authToken('admin');
+    const transaction = await createFiscalTransactionForReadiness({ transactionStatus: 'cancelled' });
+
+    const res = await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/readiness`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.readiness.status).toBe('blocked');
+    expect(res.body.readiness.issues).toContain('transaction_cancelled');
+  });
+
+  it('returns blocked when fiscal snapshot is missing', async () => {
+    const token = await authToken('admin');
+    const transaction = await createFiscalTransactionForReadiness({
+      withSnapshot: false,
+      withInvoiceDraft: false,
+    });
+
+    const res = await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/readiness`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.readiness.status).toBe('blocked');
+    expect(res.body.readiness.issues).toContain('fiscal_snapshot_missing');
+  });
+
+  it('returns blocked when invoice draft is missing', async () => {
+    const token = await authToken('admin');
+    const transaction = await createFiscalTransactionForReadiness({ withInvoiceDraft: false });
+
+    const res = await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/readiness`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.readiness.status).toBe('blocked');
+    expect(res.body.readiness.issues).toContain('invoice_draft_missing');
+  });
+
+  it('returns ready when profiles are complete', async () => {
+    const token = await authToken('admin');
+    const transaction = await createFiscalTransactionForReadiness();
+
+    const res = await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/readiness`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.readiness).toEqual({ status: 'ready', issues: [] });
+  });
+
+  it('returns warning when billing email is missing', async () => {
+    const token = await authToken('admin');
+    const profileWithoutEmail = {
+      rfc: 'MGRFCREADY12',
+      razonSocial: 'Mercado Ganadero Test',
+      regimenFiscal: '601',
+      codigoPostal: '83000',
+      usoCFDI: 'G03',
+    };
+    const transaction = await createFiscalTransactionForReadiness({
+      buyerFiscalProfile: profileWithoutEmail,
+    });
+
+    const res = await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/readiness`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.readiness.status).toBe('warning');
+    expect(res.body.readiness.issues).toContain('buyer_email_facturacion_missing');
+  });
+
+  it('returns blocked when RFC is invalid in snapshot', async () => {
+    const token = await authToken('admin');
+    const transaction = await createFiscalTransactionForReadiness({
+      buyerFiscalProfile: {
+        rfc: 'BAD',
+        razonSocial: 'Mercado Ganadero Test',
+        regimenFiscal: '601',
+        codigoPostal: '83000',
+        usoCFDI: 'G03',
+        emailFacturacion: 'facturacion@mg.test',
+      },
+    });
+
+    const res = await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/readiness`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.readiness.status).toBe('blocked');
+    expect(res.body.readiness.issues).toContain('buyer_rfc_invalid');
+  });
+
+  it('returns blocked when postal code is invalid in snapshot', async () => {
+    const token = await authToken('admin');
+    const transaction = await createFiscalTransactionForReadiness({
+      sellerFiscalProfile: {
+        rfc: 'MGRFCREADY12',
+        razonSocial: 'Mercado Ganadero Test',
+        regimenFiscal: '601',
+        codigoPostal: 'ABC',
+        usoCFDI: 'G03',
+        emailFacturacion: 'facturacion@mg.test',
+      },
+    });
+
+    const res = await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/readiness`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.readiness.status).toBe('blocked');
+    expect(res.body.readiness.issues).toContain('seller_codigo_postal_invalid');
   });
 });
