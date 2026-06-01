@@ -4,6 +4,7 @@ import { AuctionResult, AuctionResultStatus } from '../../domain/auctionResults/
 import { Audit } from '../../domain/audit/audit.model';
 import { FiscalProfile } from '../../domain/fiscalProfiles/fiscalProfile.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
+import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { Notification } from '../../domain/notifications/notification.model';
 import { Transaction } from '../../domain/transactions/transaction.model';
 
@@ -43,7 +44,7 @@ async function createFiscalBaseForConfirmedSale(result: any) {
     { new: true, upsert: true, runValidators: true }
   );
 
-  await FiscalSnapshot.findOneAndUpdate(
+  const fiscalSnapshot = await FiscalSnapshot.findOneAndUpdate(
     { transactionId: transaction._id },
     {
       $setOnInsert: {
@@ -59,6 +60,26 @@ async function createFiscalBaseForConfirmedSale(result: any) {
     },
     { new: true, upsert: true, runValidators: true }
   );
+
+  if (transaction.status === 'ready_for_invoice') {
+    await InvoiceDraft.findOneAndUpdate(
+      { transactionId: transaction._id },
+      {
+        $setOnInsert: {
+          transactionId: transaction._id,
+          fiscalSnapshotId: fiscalSnapshot._id,
+          auctionResultId: result._id,
+          buyerId: result.buyerId,
+          sellerId: result.sellerId,
+          amount: result.finalPrice,
+          currency: 'MXN',
+          status: 'ready',
+          createdFromTransaction: true,
+        },
+      },
+      { new: true, upsert: true, runValidators: true }
+    );
+  }
 }
 
 async function updateSaleStatus(req: Request, res: Response, status: 'sale_confirmed' | 'sale_cancelled') {
@@ -94,6 +115,11 @@ async function updateSaleStatus(req: Request, res: Response, status: 'sale_confi
     await createFiscalBaseForConfirmedSale(updated);
   } else {
     await Transaction.findOneAndUpdate(
+      { auctionResultId: updated._id },
+      { $set: { status: 'cancelled' } },
+      { new: true }
+    );
+    await InvoiceDraft.findOneAndUpdate(
       { auctionResultId: updated._id },
       { $set: { status: 'cancelled' } },
       { new: true }
