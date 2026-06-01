@@ -24,6 +24,10 @@ export interface IInvoiceRecord {
   issuedAt?: Date;
   cancelledAt?: Date;
   lifecycleStatus?: InvoiceRecordLifecycleStatus;
+  provider?: string;
+  providerEnvironment?: string;
+  providerReference?: string;
+  providerRequestId?: string;
   providerName?: string;
   providerStatus?: string;
   providerMessage?: string;
@@ -58,6 +62,10 @@ const InvoiceRecordSchema = new Schema<IInvoiceRecord>(
       default: 'pending',
       index: true,
     },
+    provider: { type: String, trim: true },
+    providerEnvironment: { type: String, trim: true },
+    providerReference: { type: String, trim: true },
+    providerRequestId: { type: String, trim: true },
     providerName: { type: String, trim: true },
     providerStatus: { type: String, trim: true },
     providerMessage: { type: String, trim: true },

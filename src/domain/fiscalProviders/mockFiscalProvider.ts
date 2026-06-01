@@ -26,11 +26,14 @@ export class MockFiscalProvider implements FiscalProvider {
   }
 
   async issueInvoice(input: FiscalProviderInput): Promise<FiscalProviderIssueResult> {
+    const simulatedExternalId = `mock-${String(input.invoiceQueueId)}`;
+
     if (this.options.issueShouldFail) {
       return {
         ok: false,
         providerStatus: 'failed',
         providerMessage: 'Mock invoice issue failed',
+        providerRequestId: `mock-req-${String(input.invoiceQueueId)}`,
       };
     }
 
@@ -38,16 +41,19 @@ export class MockFiscalProvider implements FiscalProvider {
       ok: true,
       providerStatus: 'issued',
       providerMessage: 'Mock invoice issued',
-      simulatedExternalId: `mock-${String(input.invoiceQueueId)}`,
+      providerReference: simulatedExternalId,
+      providerRequestId: `mock-req-${String(input.invoiceQueueId)}`,
+      simulatedExternalId,
     };
   }
 
-  async cancelInvoice(_input: FiscalProviderInput): Promise<FiscalProviderCancelResult> {
+  async cancelInvoice(input: FiscalProviderInput): Promise<FiscalProviderCancelResult> {
     if (this.options.cancelShouldFail) {
       return {
         ok: false,
         providerStatus: 'failed',
         providerMessage: 'Mock cancellation failed',
+        providerRequestId: `mock-cancel-${String(input.invoiceQueueId)}`,
       };
     }
 
@@ -55,6 +61,17 @@ export class MockFiscalProvider implements FiscalProvider {
       ok: true,
       providerStatus: 'cancelled',
       providerMessage: 'Mock cancellation successful',
+      providerReference: `mock-${String(input.invoiceQueueId)}`,
+      providerRequestId: `mock-cancel-${String(input.invoiceQueueId)}`,
+    };
+  }
+
+  async getInvoiceStatus(input: FiscalProviderInput) {
+    return {
+      ok: true,
+      providerStatus: 'mock_status_available',
+      providerMessage: 'Mock invoice status available',
+      providerReference: `mock-${String(input.invoiceQueueId)}`,
     };
   }
 }

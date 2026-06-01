@@ -15,6 +15,8 @@ export type FiscalProviderIssueResult = {
   ok: boolean;
   providerStatus: 'issued' | 'failed';
   providerMessage: string;
+  providerReference?: string;
+  providerRequestId?: string;
   simulatedExternalId?: string;
 };
 
@@ -22,6 +24,15 @@ export type FiscalProviderCancelResult = {
   ok: boolean;
   providerStatus: 'cancelled' | 'failed';
   providerMessage: string;
+  providerReference?: string;
+  providerRequestId?: string;
+};
+
+export type FiscalProviderStatusResult = {
+  ok: boolean;
+  providerStatus: string;
+  providerMessage: string;
+  providerReference?: string;
 };
 
 export interface FiscalProvider {
@@ -29,4 +40,5 @@ export interface FiscalProvider {
   validateInvoiceInput(input: FiscalProviderInput): Promise<FiscalProviderValidationResult>;
   issueInvoice(input: FiscalProviderInput): Promise<FiscalProviderIssueResult>;
   cancelInvoice(input: FiscalProviderInput): Promise<FiscalProviderCancelResult>;
+  getInvoiceStatus(input: FiscalProviderInput): Promise<FiscalProviderStatusResult>;
 }

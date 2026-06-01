@@ -1,7 +1,8 @@
 import { Types } from 'mongoose';
 import { Audit } from '../audit/audit.model';
 import { FiscalProvider } from '../fiscalProviders/fiscalProvider.interface';
-import { mockFiscalProvider } from '../fiscalProviders/mockFiscalProvider';
+import { getFiscalProviderConfig } from '../fiscalProviders/fiscalProvider.config';
+import { resolveFiscalProvider } from '../fiscalProviders/fiscalProvider.registry';
 import { InvoiceQueue } from '../invoiceQueue/invoiceQueue.model';
 import { InvoiceRecord } from '../invoiceRecords/invoiceRecord.model';
 
@@ -25,7 +26,11 @@ async function audit(actor: string, action: string, refs: InvoiceAuditRefs = {})
 
 export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = {}) {
   const actor = options.actor || 'system';
-  const provider = options.provider || mockFiscalProvider;
+  const resolvedProvider = options.provider
+    ? { provider: options.provider, config: getFiscalProviderConfig() }
+    : resolveFiscalProvider();
+  const provider = resolvedProvider.provider;
+  const providerConfig = resolvedProvider.config;
   const queueFilter: Record<string, unknown> = { status: 'queued' };
 
   if (options.invoiceQueueId) {
@@ -114,6 +119,10 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
           $set: {
             status: 'completed',
             processedAt: now,
+            provider: provider.name,
+            providerEnvironment: providerConfig.environment,
+            providerReference: issueResult.providerReference,
+            providerRequestId: issueResult.providerRequestId,
             providerName: provider.name,
             providerStatus: issueResult.providerStatus,
             providerMessage: issueResult.providerMessage,
@@ -147,6 +156,8 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
       $set: {
         status: 'failed',
         lastError: message,
+        provider: provider.name,
+        providerEnvironment: providerConfig.environment,
         providerName: provider.name,
         providerStatus: 'failed',
         providerMessage: message,

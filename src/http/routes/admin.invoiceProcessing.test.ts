@@ -4,6 +4,8 @@ import { Types } from 'mongoose';
 import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { Audit } from '../../domain/audit/audit.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
+import { getFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
+import { listFiscalProviders, resolveFiscalProvider } from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
 import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
@@ -119,6 +121,64 @@ describe('admin fiscal invoice processing', () => {
     expect(res.body).toEqual({ error: 'Forbidden' });
   });
 
+  it('lists fiscal providers only for admin or super', async () => {
+    const adminToken = await authToken('admin');
+    const userToken = await authToken('user');
+
+    const noAuth = await request(app).get('/admin/fiscal/providers');
+    const user = await request(app)
+      .get('/admin/fiscal/providers')
+      .set('Authorization', bearer(userToken));
+    const admin = await request(app)
+      .get('/admin/fiscal/providers')
+      .set('Authorization', bearer(adminToken));
+
+    expect(noAuth.status).toBe(401);
+    expect(user.status).toBe(403);
+    expect(admin.status).toBe(200);
+    expect(admin.body.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'mock', enabled: true, sandbox: true }),
+      expect.objectContaining({ name: 'future-pac-1', enabled: false }),
+      expect.objectContaining({ name: 'future-pac-2', enabled: false }),
+    ]));
+  });
+
+  it('returns safe current fiscal provider config', async () => {
+    const token = await authToken('super');
+
+    const res = await request(app)
+      .get('/admin/fiscal/providers/current')
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.provider).toBe('mock');
+    expect(res.body.config).toMatchObject({
+      provider: 'mock',
+      environment: 'mock',
+      enabled: true,
+      sandbox: true,
+    });
+    expect(JSON.stringify(res.body)).not.toMatch(/secret|token|password/i);
+  });
+
+  it('resolves the default fiscal provider through registry', () => {
+    const config = getFiscalProviderConfig({});
+    const resolved = resolveFiscalProvider(config);
+    const providers = listFiscalProviders();
+
+    expect(config).toMatchObject({
+      provider: 'mock',
+      environment: 'mock',
+      enabled: true,
+      sandbox: true,
+      timeoutMs: 10_000,
+    });
+    expect(resolved.provider.name).toBe('mock');
+    expect(providers.map((provider) => provider.name)).toEqual(
+      expect.arrayContaining(['mock', 'future-pac-1', 'future-pac-2'])
+    );
+  });
+
   it('allows admin to process next queued invoice operation', async () => {
     const token = await authToken('admin');
     const { queue } = await createQueuedInvoice();
@@ -175,6 +235,10 @@ describe('admin fiscal invoice processing', () => {
     expect(record?.status).toBe('completed');
     expect(record?.processedAt).toBeTruthy();
     expect(record?.providerName).toBe('mock');
+    expect(record?.provider).toBe('mock');
+    expect(record?.providerEnvironment).toBe('mock');
+    expect(record?.providerReference).toBe(`mock-${String(queue._id)}`);
+    expect(record?.providerRequestId).toBe(`mock-req-${String(queue._id)}`);
     expect(record?.providerStatus).toBe('issued');
     expect(record?.providerMessage).toBe('Mock invoice issued');
     expect(record?.simulatedExternalId).toBe(`mock-${String(queue._id)}`);
@@ -1028,10 +1092,12 @@ describe('admin fiscal invoice processing', () => {
       providerMessage: 'Mock invoice issued',
       simulatedExternalId: `mock-${String(queue._id)}`,
     });
-    expect(cancellation).toEqual({
+    expect(cancellation).toMatchObject({
       ok: true,
       providerStatus: 'cancelled',
       providerMessage: 'Mock cancellation successful',
+      providerReference: `mock-${String(queue._id)}`,
+      providerRequestId: `mock-cancel-${String(queue._id)}`,
     });
     expect(JSON.stringify(issue)).not.toContain('xml');
     expect(JSON.stringify(issue)).not.toContain('pdf');
@@ -1048,24 +1114,28 @@ describe('admin fiscal invoice processing', () => {
       invoiceQueueId: queue._id,
     });
 
-    expect(issue).toEqual({
+    expect(issue).toMatchObject({
       ok: false,
       providerStatus: 'failed',
       providerMessage: 'Mock invoice issue failed',
+      providerRequestId: `mock-req-${String(queue._id)}`,
     });
   });
 
-  it('invoice processor stores provider metadata from the mock provider', async () => {
+  it('invoice processor stores provider metadata through registry/factory', async () => {
     const { queue } = await createQueuedInvoice();
 
     const result = await processInvoiceQueue({
       invoiceQueueId: queue._id,
       actor: 'system',
-      provider: new MockFiscalProvider(),
     });
     const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id }).lean();
 
     expect(result.ok).toBe(true);
+    expect(record?.provider).toBe('mock');
+    expect(record?.providerEnvironment).toBe('mock');
+    expect(record?.providerReference).toBe(`mock-${String(queue._id)}`);
+    expect(record?.providerRequestId).toBe(`mock-req-${String(queue._id)}`);
     expect(record?.providerName).toBe('mock');
     expect(record?.providerStatus).toBe('issued');
     expect(record?.providerMessage).toBe('Mock invoice issued');
@@ -1092,6 +1162,8 @@ describe('admin fiscal invoice processing', () => {
     expect(record?.attempts).toBe(1);
     expect(record?.lastError).toBe('Mock invoice issue failed');
     expect(record?.providerName).toBe('mock');
+    expect(record?.provider).toBe('mock');
+    expect(record?.providerEnvironment).toBe('mock');
     expect(record?.providerStatus).toBe('failed');
     expect(record?.providerMessage).toBe('Mock invoice issue failed');
   });
@@ -1145,6 +1217,10 @@ describe('admin fiscal invoice processing', () => {
     expect(freshRecord?.lifecycleStatus).toBe('issued');
     expect(freshRecord?.issuedAt).toBeTruthy();
     expect(freshRecord?.providerName).toBe('mock');
+    expect(freshRecord?.provider).toBe('mock');
+    expect(freshRecord?.providerEnvironment).toBe('mock');
+    expect(freshRecord?.providerReference).toBe(`mock-${String(queue._id)}`);
+    expect(freshRecord?.providerRequestId).toBe(`mock-req-${String(queue._id)}`);
     expect(freshRecord?.providerStatus).toBe('issued');
     expect(freshRecord?.providerMessage).toBe('Mock invoice issued');
     expect(freshRecord?.simulatedExternalId).toBe(`mock-${String(queue._id)}`);
@@ -1226,6 +1302,10 @@ describe('admin fiscal invoice processing', () => {
     expect(freshRecord?.lifecycleStatus).toBe('cancelled');
     expect(freshRecord?.cancelledAt).toBeTruthy();
     expect(freshRecord?.providerName).toBe('mock');
+    expect(freshRecord?.provider).toBe('mock');
+    expect(freshRecord?.providerEnvironment).toBe('mock');
+    expect(freshRecord?.providerReference).toBe(`mock-${String(queue._id)}`);
+    expect(freshRecord?.providerRequestId).toBe(`mock-cancel-${String(queue._id)}`);
     expect(freshRecord?.providerStatus).toBe('cancelled');
     expect(freshRecord?.providerMessage).toBe('Mock cancellation successful');
     expect(audit).toBeTruthy();

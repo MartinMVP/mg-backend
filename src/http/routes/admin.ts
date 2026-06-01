@@ -4,7 +4,8 @@ import { requireRole } from '../middlewares/requireRole';
 import { AuctionResultStatus, AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { Audit } from '../../domain/audit/audit.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
-import { mockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
+import { getFiscalProviderConfig, toSafeFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
+import { listFiscalProviders, resolveFiscalProvider } from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceRecord } from '../../domain/invoiceRecords/invoiceRecord.model';
 import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
@@ -100,6 +101,22 @@ function invoiceAuditFilter(refs: {
 // Solo admin y super
 router.get('/ping', requireAuth, requireRole('admin', 'super'), (_req, res) => {
   res.json({ ok: true, area: 'admin', ts: new Date().toISOString() });
+});
+
+router.get('/fiscal/providers', requireAuth, requireRole('admin', 'super'), (_req, res) => {
+  res.json({
+    providers: listFiscalProviders(),
+  });
+});
+
+router.get('/fiscal/providers/current', requireAuth, requireRole('admin', 'super'), (_req, res) => {
+  const config = getFiscalProviderConfig();
+  const resolved = resolveFiscalProvider(config);
+
+  res.json({
+    provider: resolved.provider.name,
+    config: toSafeFiscalProviderConfig(config),
+  });
 });
 
 router.get('/fiscal/analytics/processing', requireAuth, requireRole('admin', 'super'), async (_req, res) => {
@@ -411,7 +428,8 @@ router.post('/fiscal/invoice-records/:id/issue', requireAuth, requireRole('admin
     return res.status(409).json({ error: 'Invoice record cannot be issued' });
   }
 
-  const issueResult = await mockFiscalProvider.issueInvoice({
+  const resolvedProvider = resolveFiscalProvider();
+  const issueResult = await resolvedProvider.provider.issueInvoice({
     transactionId: issuingRecord.transactionId,
     invoiceDraftId: issuingRecord.invoiceDraftId,
     invoiceQueueId: issuingRecord.invoiceQueueId,
@@ -422,9 +440,12 @@ router.post('/fiscal/invoice-records/:id/issue', requireAuth, requireRole('admin
       {
         $set: {
           lifecycleStatus: 'pending',
-          providerName: mockFiscalProvider.name,
+          provider: resolvedProvider.provider.name,
+          providerEnvironment: resolvedProvider.config.environment,
+          providerName: resolvedProvider.provider.name,
           providerStatus: issueResult.providerStatus,
           providerMessage: issueResult.providerMessage,
+          providerRequestId: issueResult.providerRequestId,
         },
       },
       { runValidators: true }
@@ -438,7 +459,11 @@ router.post('/fiscal/invoice-records/:id/issue', requireAuth, requireRole('admin
       $set: {
         lifecycleStatus: 'issued',
         issuedAt: new Date(),
-        providerName: mockFiscalProvider.name,
+        provider: resolvedProvider.provider.name,
+        providerEnvironment: resolvedProvider.config.environment,
+        providerReference: issueResult.providerReference,
+        providerRequestId: issueResult.providerRequestId,
+        providerName: resolvedProvider.provider.name,
         providerStatus: issueResult.providerStatus,
         providerMessage: issueResult.providerMessage,
         simulatedExternalId: issueResult.simulatedExternalId,
@@ -489,7 +514,8 @@ router.post('/fiscal/invoice-records/:id/cancel', requireAuth, requireRole('admi
     return res.status(409).json({ error: 'Invoice record cannot be cancelled' });
   }
 
-  const cancelResult = await mockFiscalProvider.cancelInvoice({
+  const resolvedProvider = resolveFiscalProvider();
+  const cancelResult = await resolvedProvider.provider.cancelInvoice({
     transactionId: cancellingRecord.transactionId,
     invoiceDraftId: cancellingRecord.invoiceDraftId,
     invoiceQueueId: cancellingRecord.invoiceQueueId,
@@ -500,9 +526,12 @@ router.post('/fiscal/invoice-records/:id/cancel', requireAuth, requireRole('admi
       {
         $set: {
           lifecycleStatus: 'issued',
-          providerName: mockFiscalProvider.name,
+          provider: resolvedProvider.provider.name,
+          providerEnvironment: resolvedProvider.config.environment,
+          providerName: resolvedProvider.provider.name,
           providerStatus: cancelResult.providerStatus,
           providerMessage: cancelResult.providerMessage,
+          providerRequestId: cancelResult.providerRequestId,
         },
       },
       { runValidators: true }
@@ -516,7 +545,11 @@ router.post('/fiscal/invoice-records/:id/cancel', requireAuth, requireRole('admi
       $set: {
         lifecycleStatus: 'cancelled',
         cancelledAt: new Date(),
-        providerName: mockFiscalProvider.name,
+        provider: resolvedProvider.provider.name,
+        providerEnvironment: resolvedProvider.config.environment,
+        providerReference: cancelResult.providerReference,
+        providerRequestId: cancelResult.providerRequestId,
+        providerName: resolvedProvider.provider.name,
         providerStatus: cancelResult.providerStatus,
         providerMessage: cancelResult.providerMessage,
       },
