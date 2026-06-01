@@ -110,21 +110,61 @@ describe('account fiscal profile routes', () => {
     usoCFDI: 'G03',
   };
 
-  it('allows a user to create a fiscal profile', async () => {
+  it('allows a user to create a fiscal profile with billing email', async () => {
     const user = await createTestUser('user');
     const token = createAccessToken(String(user._id), 'user');
 
     const res = await request(app)
       .post('/account/fiscal-profile')
       .set('Authorization', bearer(token))
-      .send(fiscalPayload);
+      .send({
+        ...fiscalPayload,
+        emailFacturacion: 'facturas@rancho.test',
+      });
 
     const stored = await FiscalProfile.findOne({ userId: user._id });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject(fiscalPayload);
+    expect(res.body).toMatchObject({
+      ...fiscalPayload,
+      emailFacturacion: 'facturas@rancho.test',
+      isValidated: false,
+    });
     expect(stored).toBeTruthy();
     expect(stored?.rfc).toBe(fiscalPayload.rfc);
+    expect(stored?.isValidated).toBe(false);
+  });
+
+  it('rejects an invalid codigoPostal', async () => {
+    const user = await createTestUser('user');
+    const token = createAccessToken(String(user._id), 'user');
+
+    const res = await request(app)
+      .post('/account/fiscal-profile')
+      .set('Authorization', bearer(token))
+      .send({
+        ...fiscalPayload,
+        codigoPostal: '8300A',
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Código postal inválido' });
+  });
+
+  it('rejects an invalid RFC', async () => {
+    const user = await createTestUser('user');
+    const token = createAccessToken(String(user._id), 'user');
+
+    const res = await request(app)
+      .post('/account/fiscal-profile')
+      .set('Authorization', bearer(token))
+      .send({
+        ...fiscalPayload,
+        rfc: 'RFC-MALO',
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'RFC inválido' });
   });
 
   it('allows a user to update a fiscal profile', async () => {

@@ -1,7 +1,10 @@
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
+import { FiscalProfile } from '../../domain/fiscalProfiles/fiscalProfile.model';
+import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { Notification } from '../../domain/notifications/notification.model';
+import { Transaction } from '../../domain/transactions/transaction.model';
 import { bearer, createAccessToken } from '../../test/helpers/auth';
 import { createLiveAuction, createTestListing, createTestUser } from '../../test/helpers/factories';
 
@@ -33,6 +36,18 @@ describe('sales confirmation routes', () => {
     });
   }
 
+  async function createFiscalProfile(userId: any) {
+    return FiscalProfile.create({
+      userId,
+      rfc: 'XAXX010101000',
+      razonSocial: 'Rancho Fiscal SA de CV',
+      regimenFiscal: '601',
+      codigoPostal: '83000',
+      usoCFDI: 'G03',
+      emailFacturacion: 'facturas@rancho.test',
+    });
+  }
+
   it('allows the seller to confirm a sale', async () => {
     const seller = await createTestUser('user');
     const buyer = await createTestUser('user');
@@ -48,6 +63,95 @@ describe('sales confirmation routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('sale_confirmed');
     expect(freshSale?.status).toBe('sale_confirmed');
+  });
+
+  it('creates a transaction when a sale is confirmed', async () => {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const sale = await createSaleResult(seller._id, buyer._id);
+    const token = createAccessToken(String(seller._id), 'user');
+
+    const res = await request(app)
+      .post(`/sales/${sale._id}/confirm`)
+      .set('Authorization', bearer(token));
+
+    const transaction = await Transaction.findOne({ auctionResultId: sale._id });
+
+    expect(res.status).toBe(200);
+    expect(transaction).toBeTruthy();
+    expect(String(transaction?.buyerId)).toBe(String(buyer._id));
+    expect(String(transaction?.sellerId)).toBe(String(seller._id));
+    expect(transaction?.amount).toBe(2000);
+    expect(transaction?.status).toBe('pending');
+  });
+
+  it('creates a fiscal snapshot when buyer and seller fiscal profiles exist', async () => {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const sale = await createSaleResult(seller._id, buyer._id);
+    const token = createAccessToken(String(seller._id), 'user');
+
+    await createFiscalProfile(seller._id);
+    await createFiscalProfile(buyer._id);
+
+    const res = await request(app)
+      .post(`/sales/${sale._id}/confirm`)
+      .set('Authorization', bearer(token));
+
+    const transaction = await Transaction.findOne({ auctionResultId: sale._id });
+    const snapshot = await FiscalSnapshot.findOne({ transactionId: transaction?._id });
+
+    expect(res.status).toBe(200);
+    expect(transaction?.status).toBe('ready_for_invoice');
+    expect(snapshot).toBeTruthy();
+    expect(snapshot?.amount).toBe(2000);
+    expect(snapshot?.currency).toBe('MXN');
+    expect((snapshot?.buyerFiscalProfile as any)?.rfc).toBe('XAXX010101000');
+    expect((snapshot?.sellerFiscalProfile as any)?.rfc).toBe('XAXX010101000');
+  });
+
+  it('creates a pending transaction when a fiscal profile is missing', async () => {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const sale = await createSaleResult(seller._id, buyer._id);
+    const token = createAccessToken(String(seller._id), 'user');
+
+    await createFiscalProfile(seller._id);
+
+    const res = await request(app)
+      .post(`/sales/${sale._id}/confirm`)
+      .set('Authorization', bearer(token));
+
+    const transaction = await Transaction.findOne({ auctionResultId: sale._id });
+
+    expect(res.status).toBe(200);
+    expect(transaction?.status).toBe('pending');
+  });
+
+  it('does not duplicate transaction or fiscal snapshot when confirm is called twice', async () => {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const sale = await createSaleResult(seller._id, buyer._id);
+    const token = createAccessToken(String(seller._id), 'user');
+
+    await createFiscalProfile(seller._id);
+    await createFiscalProfile(buyer._id);
+
+    const first = await request(app)
+      .post(`/sales/${sale._id}/confirm`)
+      .set('Authorization', bearer(token));
+    const second = await request(app)
+      .post(`/sales/${sale._id}/confirm`)
+      .set('Authorization', bearer(token));
+
+    const transactionCount = await Transaction.countDocuments({ auctionResultId: sale._id });
+    const transaction = await Transaction.findOne({ auctionResultId: sale._id });
+    const snapshotCount = await FiscalSnapshot.countDocuments({ transactionId: transaction?._id });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(409);
+    expect(transactionCount).toBe(1);
+    expect(snapshotCount).toBe(1);
   });
 
   it('allows the seller to cancel a sale and notifies the buyer', async () => {
@@ -68,6 +172,30 @@ describe('sales confirmation routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('sale_cancelled');
     expect(notification).toBeTruthy();
+  });
+
+  it('marks an existing transaction as cancelled when a sale is cancelled', async () => {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const sale = await createSaleResult(seller._id, buyer._id);
+    const token = createAccessToken(String(seller._id), 'user');
+
+    await Transaction.create({
+      auctionResultId: sale._id,
+      buyerId: buyer._id,
+      sellerId: seller._id,
+      amount: 2000,
+      status: 'pending',
+    });
+
+    const res = await request(app)
+      .post(`/sales/${sale._id}/cancel`)
+      .set('Authorization', bearer(token));
+
+    const transaction = await Transaction.findOne({ auctionResultId: sale._id });
+
+    expect(res.status).toBe(200);
+    expect(transaction?.status).toBe('cancelled');
   });
 
   it.each(['confirm', 'cancel'])('rejects buyer attempts to %s a sale', async (action) => {

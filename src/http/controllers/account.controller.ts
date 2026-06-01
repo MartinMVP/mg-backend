@@ -52,10 +52,25 @@ export async function getFiscalProfile(req: Request, res: Response) {
 
 export async function upsertFiscalProfile(req: Request, res: Response) {
   const user = (req as any).user;
-  const { rfc, razonSocial, regimenFiscal, codigoPostal, usoCFDI } = req.body || {};
+  const {
+    rfc,
+    razonSocial,
+    regimenFiscal,
+    codigoPostal,
+    usoCFDI,
+    emailFacturacion,
+  } = req.body || {};
 
   if (!rfc || !razonSocial || !regimenFiscal || !codigoPostal || !usoCFDI) {
     return res.status(400).json({ error: 'Campos fiscales requeridos' });
+  }
+
+  if (!/^[A-Z0-9]{12,13}$/i.test(String(rfc).trim())) {
+    return res.status(400).json({ error: 'RFC inválido' });
+  }
+
+  if (!/^\d{5}$/.test(String(codigoPostal).trim())) {
+    return res.status(400).json({ error: 'Código postal inválido' });
   }
 
   const profile = await FiscalProfile.findOneAndUpdate(
@@ -67,6 +82,7 @@ export async function upsertFiscalProfile(req: Request, res: Response) {
         regimenFiscal,
         codigoPostal,
         usoCFDI,
+        emailFacturacion,
       },
     },
     { new: true, upsert: true, runValidators: true }

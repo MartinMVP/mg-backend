@@ -2,7 +2,10 @@ import { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { AuctionResult, AuctionResultStatus } from '../../domain/auctionResults/auctionResult.model';
 import { Audit } from '../../domain/audit/audit.model';
+import { FiscalProfile } from '../../domain/fiscalProfiles/fiscalProfile.model';
+import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { Notification } from '../../domain/notifications/notification.model';
+import { Transaction } from '../../domain/transactions/transaction.model';
 
 const terminalStatuses: AuctionResultStatus[] = [
   'sale_confirmed',
@@ -15,6 +18,46 @@ function canManageSale(user: any, result: any) {
     String(result.sellerId) === String(user?.sub) ||
     user?.role === 'admin' ||
     user?.role === 'super'
+  );
+}
+
+async function createFiscalBaseForConfirmedSale(result: any) {
+  const [buyerFiscalProfile, sellerFiscalProfile] = await Promise.all([
+    FiscalProfile.findOne({ userId: result.buyerId }).lean(),
+    FiscalProfile.findOne({ userId: result.sellerId }).lean(),
+  ]);
+  const transactionStatus =
+    buyerFiscalProfile && sellerFiscalProfile ? 'ready_for_invoice' : 'pending';
+
+  const transaction = await Transaction.findOneAndUpdate(
+    { auctionResultId: result._id },
+    {
+      $setOnInsert: {
+        auctionResultId: result._id,
+        buyerId: result.buyerId,
+        sellerId: result.sellerId,
+        amount: result.finalPrice,
+      },
+      $set: { status: transactionStatus },
+    },
+    { new: true, upsert: true, runValidators: true }
+  );
+
+  await FiscalSnapshot.findOneAndUpdate(
+    { transactionId: transaction._id },
+    {
+      $setOnInsert: {
+        transactionId: transaction._id,
+        auctionResultId: result._id,
+        buyerId: result.buyerId,
+        sellerId: result.sellerId,
+        buyerFiscalProfile: buyerFiscalProfile || null,
+        sellerFiscalProfile: sellerFiscalProfile || null,
+        amount: result.finalPrice,
+        currency: 'MXN',
+      },
+    },
+    { new: true, upsert: true, runValidators: true }
   );
 }
 
@@ -46,6 +89,16 @@ async function updateSaleStatus(req: Request, res: Response, status: 'sale_confi
   if (!updated) return res.status(409).json({ error: 'Sale already finalized' });
 
   const confirmed = status === 'sale_confirmed';
+
+  if (confirmed) {
+    await createFiscalBaseForConfirmedSale(updated);
+  } else {
+    await Transaction.findOneAndUpdate(
+      { auctionResultId: updated._id },
+      { $set: { status: 'cancelled' } },
+      { new: true }
+    );
+  }
 
   await Notification.create({
     userId: updated.buyerId,
