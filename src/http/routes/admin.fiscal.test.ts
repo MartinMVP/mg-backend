@@ -4,6 +4,7 @@ import { Types } from 'mongoose';
 import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
+import { InvoiceQueue } from '../../domain/invoiceQueue/invoiceQueue.model';
 import { Transaction, TransactionStatus } from '../../domain/transactions/transaction.model';
 import { bearer, createAccessToken } from '../../test/helpers/auth';
 import { createLiveAuction, createTestListing, createTestUser } from '../../test/helpers/factories';
@@ -483,5 +484,194 @@ describe('GET /admin/fiscal/transactions/:id/readiness', () => {
     expect(res.status).toBe(200);
     expect(res.body.readiness.status).toBe('blocked');
     expect(res.body.readiness.issues).toContain('seller_codigo_postal_invalid');
+  });
+});
+
+describe('POST /admin/fiscal/transactions/:id/queue', () => {
+  let app: typeof import('../../app').default;
+
+  beforeAll(async () => {
+    app = (await import('../../app')).default;
+  });
+
+  const completeProfile = {
+    rfc: 'MGRFCREADY12',
+    razonSocial: 'Mercado Ganadero Test',
+    regimenFiscal: '601',
+    codigoPostal: '83000',
+    usoCFDI: 'G03',
+    emailFacturacion: 'facturacion@mg.test',
+  };
+
+  async function authToken(role: 'user' | 'admin' | 'super' = 'admin') {
+    const user = await createTestUser(role);
+    return createAccessToken(String(user._id), role);
+  }
+
+  async function createQueueCandidate(options: {
+    transactionStatus?: TransactionStatus;
+    invoiceDraftStatus?: 'draft' | 'ready' | 'blocked' | 'cancelled';
+    buyerFiscalProfile?: Record<string, unknown> | null;
+    sellerFiscalProfile?: Record<string, unknown> | null;
+    withSnapshot?: boolean;
+    withInvoiceDraft?: boolean;
+  } = {}) {
+    const seller = await createTestUser('user');
+    const buyer = await createTestUser('user');
+    const listing = await createTestListing(seller._id);
+    const auction = await createLiveAuction({
+      listing: listing._id,
+      state: 'closed',
+      currentWinner: buyer._id,
+      currentPrice: 6000,
+      endsAt: new Date(Date.now() - 60_000),
+    });
+    const result = await AuctionResult.create({
+      auctionId: auction._id,
+      listingId: listing._id,
+      sellerId: seller._id,
+      buyerId: buyer._id,
+      finalPrice: 6000,
+      closedAt: new Date(),
+      status: 'sale_confirmed',
+    });
+    const transaction = await Transaction.create({
+      auctionResultId: result._id,
+      buyerId: buyer._id,
+      sellerId: seller._id,
+      amount: 6000,
+      status: options.transactionStatus || 'ready_for_invoice',
+    });
+    let fiscalSnapshot: any = null;
+
+    if (options.withSnapshot !== false) {
+      fiscalSnapshot = await FiscalSnapshot.create({
+        transactionId: transaction._id,
+        auctionResultId: result._id,
+        buyerId: buyer._id,
+        sellerId: seller._id,
+        buyerFiscalProfile: options.buyerFiscalProfile === undefined ? completeProfile : options.buyerFiscalProfile,
+        sellerFiscalProfile: options.sellerFiscalProfile === undefined ? completeProfile : options.sellerFiscalProfile,
+        amount: 6000,
+        currency: 'MXN',
+      });
+    }
+
+    if (options.withInvoiceDraft !== false && fiscalSnapshot) {
+      await InvoiceDraft.create({
+        transactionId: transaction._id,
+        fiscalSnapshotId: fiscalSnapshot._id,
+        auctionResultId: result._id,
+        buyerId: buyer._id,
+        sellerId: seller._id,
+        amount: 6000,
+        currency: 'MXN',
+        status: options.invoiceDraftStatus || 'ready',
+        createdFromTransaction: true,
+      });
+    }
+
+    return transaction;
+  }
+
+  it('returns 401 without auth', async () => {
+    const transaction = await createQueueCandidate();
+
+    const res = await request(app).post(`/admin/fiscal/transactions/${transaction._id}/queue`);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 for role user', async () => {
+    const token = await authToken('user');
+    const transaction = await createQueueCandidate();
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'Forbidden' });
+  });
+
+  it('returns 409 when readiness is blocked', async () => {
+    const token = await authToken('admin');
+    const transaction = await createQueueCandidate({ withInvoiceDraft: false });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(409);
+    expect(res.body.readiness.status).toBe('blocked');
+    expect(await InvoiceQueue.countDocuments()).toBe(0);
+  });
+
+  it('returns 409 when readiness is warning', async () => {
+    const token = await authToken('admin');
+    const transaction = await createQueueCandidate({
+      buyerFiscalProfile: {
+        rfc: 'MGRFCREADY12',
+        razonSocial: 'Mercado Ganadero Test',
+        regimenFiscal: '601',
+        codigoPostal: '83000',
+        usoCFDI: 'G03',
+      },
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(409);
+    expect(res.body.readiness.status).toBe('warning');
+    expect(await InvoiceQueue.countDocuments()).toBe(0);
+  });
+
+  it('allows admin to create a queued invoice operation when readiness is ready', async () => {
+    const token = await authToken('admin');
+    const transaction = await createQueueCandidate();
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      transactionId: String(transaction._id),
+      status: 'queued',
+    });
+    expect(res.body.invoiceDraftId).toBeTruthy();
+    expect(res.body.fiscalSnapshotId).toBeTruthy();
+    expect(await InvoiceQueue.countDocuments({ transactionId: transaction._id })).toBe(1);
+  });
+
+  it('does not duplicate an active queue', async () => {
+    const token = await authToken('admin');
+    const transaction = await createQueueCandidate();
+
+    const first = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
+      .set('Authorization', bearer(token));
+    const second = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
+      .set('Authorization', bearer(token));
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(200);
+    expect(second.body._id).toBe(first.body._id);
+    expect(await InvoiceQueue.countDocuments({ transactionId: transaction._id })).toBe(1);
+  });
+
+  it('allows super to create a queued invoice operation', async () => {
+    const token = await authToken('super');
+    const transaction = await createQueueCandidate();
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('queued');
   });
 });
