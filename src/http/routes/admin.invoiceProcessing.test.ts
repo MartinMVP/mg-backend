@@ -360,4 +360,227 @@ describe('admin fiscal invoice processing', () => {
     expect(detailRes.status).toBe(404);
     expect(detailRes.body).toEqual({ error: 'Not found' });
   });
+
+  it('protects invoice processing operation endpoints', async () => {
+    const token = await authToken('user');
+    const { queue } = await createQueuedInvoice();
+    const record = await InvoiceRecord.create({
+      transactionId: queue.transactionId,
+      invoiceDraftId: queue.invoiceDraftId,
+      invoiceQueueId: queue._id,
+      status: 'failed',
+      attempts: 1,
+      lastError: 'Retryable',
+    });
+
+    const noAuth = await request(app).post(`/admin/fiscal/invoice-records/${record._id}/retry`);
+    const userRetry = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/retry`)
+      .set('Authorization', bearer(token));
+    const userCancel = await request(app)
+      .post(`/admin/fiscal/queue/${queue._id}/cancel`)
+      .set('Authorization', bearer(token));
+    const userRecover = await request(app)
+      .post('/admin/fiscal/queue/recover-stuck')
+      .set('Authorization', bearer(token));
+
+    expect(noAuth.status).toBe(401);
+    expect(userRetry.status).toBe(403);
+    expect(userCancel.status).toBe(403);
+    expect(userRecover.status).toBe(403);
+  });
+
+  it('allows retry only for failed records', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice();
+    await request(app)
+      .post(`/admin/fiscal/queue/${queue._id}/process`)
+      .set('Authorization', bearer(token));
+    const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record?._id}/retry`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'Invoice record is not failed' });
+  });
+
+  it('retries a failed record without duplicating records or incrementing attempts', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice('processing');
+    const record = await InvoiceRecord.create({
+      transactionId: queue.transactionId,
+      invoiceDraftId: queue.invoiceDraftId,
+      invoiceQueueId: queue._id,
+      status: 'failed',
+      attempts: 2,
+      lastError: 'Temporary failure',
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/retry`)
+      .set('Authorization', bearer(token));
+
+    const freshQueue = await InvoiceQueue.findById(queue._id);
+    const freshRecord = await InvoiceRecord.findById(record._id).lean();
+    const audit = await Audit.findOne({ action: 'INVOICE_PROCESSING_RETRY_REQUESTED' });
+
+    expect(res.status).toBe(200);
+    expect(freshQueue?.status).toBe('queued');
+    expect(freshRecord?.attempts).toBe(2);
+    expect(freshRecord?.lastError).toBeUndefined();
+    expect(await InvoiceRecord.countDocuments({ invoiceQueueId: queue._id })).toBe(1);
+    expect(audit).toBeTruthy();
+  });
+
+  it('does not increment retry attempts until processing runs again', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice('processing');
+    const record = await InvoiceRecord.create({
+      transactionId: queue.transactionId,
+      invoiceDraftId: queue.invoiceDraftId,
+      invoiceQueueId: queue._id,
+      status: 'failed',
+      attempts: 1,
+      lastError: 'Retryable',
+    });
+
+    const retry = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/retry`)
+      .set('Authorization', bearer(token));
+    const afterRetry = await InvoiceRecord.findById(record._id).lean();
+    const process = await request(app)
+      .post(`/admin/fiscal/queue/${queue._id}/process`)
+      .set('Authorization', bearer(token));
+    const afterProcess = await InvoiceRecord.findById(record._id).lean();
+
+    expect(retry.status).toBe(200);
+    expect(afterRetry?.attempts).toBe(1);
+    expect(process.status).toBe(200);
+    expect(afterProcess?.attempts).toBe(2);
+  });
+
+  it('cancels a queued invoice queue', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice();
+
+    const res = await request(app)
+      .post(`/admin/fiscal/queue/${queue._id}/cancel`)
+      .set('Authorization', bearer(token));
+    const freshQueue = await InvoiceQueue.findById(queue._id);
+    const audit = await Audit.findOne({ action: 'INVOICE_QUEUE_CANCELLED' });
+
+    expect(res.status).toBe(200);
+    expect(freshQueue?.status).toBe('cancelled');
+    expect(audit).toBeTruthy();
+  });
+
+  it('cancels a processing invoice queue and marks its record failed', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice('processing');
+    const record = await InvoiceRecord.create({
+      transactionId: queue.transactionId,
+      invoiceDraftId: queue.invoiceDraftId,
+      invoiceQueueId: queue._id,
+      status: 'processing',
+      attempts: 1,
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/queue/${queue._id}/cancel`)
+      .set('Authorization', bearer(token));
+    const freshQueue = await InvoiceQueue.findById(queue._id);
+    const freshRecord = await InvoiceRecord.findById(record._id);
+
+    expect(res.status).toBe(200);
+    expect(freshQueue?.status).toBe('cancelled');
+    expect(freshRecord?.status).toBe('failed');
+    expect(freshRecord?.lastError).toBe('Cancelled by admin');
+  });
+
+  it('does not cancel a completed invoice queue', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice('completed');
+
+    const res = await request(app)
+      .post(`/admin/fiscal/queue/${queue._id}/cancel`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'Invoice queue cannot be cancelled' });
+  });
+
+  it('recovers old processing queues without processing them', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice('processing');
+    await InvoiceQueue.collection.updateOne(
+      { _id: queue._id },
+      { $set: { updatedAt: new Date(Date.now() - 16 * 60_000) } }
+    );
+
+    const res = await request(app)
+      .post('/admin/fiscal/queue/recover-stuck')
+      .set('Authorization', bearer(token));
+    const freshQueue = await InvoiceQueue.findById(queue._id);
+    const audit = await Audit.findOne({ action: 'INVOICE_QUEUE_RECOVERED' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.recoveredCount).toBe(1);
+    expect(freshQueue?.status).toBe('queued');
+    expect(audit).toBeTruthy();
+  });
+
+  it('does not recover recent processing queues', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice('processing');
+
+    const res = await request(app)
+      .post('/admin/fiscal/queue/recover-stuck')
+      .set('Authorization', bearer(token));
+    const freshQueue = await InvoiceQueue.findById(queue._id);
+
+    expect(res.status).toBe(200);
+    expect(res.body.recoveredCount).toBe(0);
+    expect(freshQueue?.status).toBe('processing');
+  });
+
+  it('cancels the queue when max processing attempts is reached', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice();
+    await InvoiceRecord.create({
+      transactionId: queue.transactionId,
+      invoiceDraftId: queue.invoiceDraftId,
+      invoiceQueueId: queue._id,
+      status: 'failed',
+      attempts: 2,
+      lastError: 'Previous failure',
+    });
+    vi.spyOn(Audit, 'create').mockRejectedValueOnce(new Error('Final failure'));
+
+    const res = await request(app)
+      .post(`/admin/fiscal/queue/${queue._id}/process`)
+      .set('Authorization', bearer(token));
+
+    const freshQueue = await InvoiceQueue.findById(queue._id);
+    const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id });
+    const actions = await Audit.find({
+      action: {
+        $in: [
+          'INVOICE_PROCESSING_FAILED',
+          'INVOICE_PROCESSING_MAX_ATTEMPTS_REACHED',
+        ],
+      },
+    }).distinct('action');
+
+    expect(res.status).toBe(500);
+    expect(freshQueue?.status).toBe('cancelled');
+    expect(record?.status).toBe('failed');
+    expect(record?.attempts).toBe(3);
+    expect(record?.lastError).toBe('Final failure');
+    expect(actions).toEqual(expect.arrayContaining([
+      'INVOICE_PROCESSING_FAILED',
+      'INVOICE_PROCESSING_MAX_ATTEMPTS_REACHED',
+    ]));
+  });
 });

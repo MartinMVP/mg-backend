@@ -8,6 +8,8 @@ type ProcessInvoiceQueueOptions = {
   actor?: string;
 };
 
+export const MAX_INVOICE_PROCESSING_ATTEMPTS = 3;
+
 async function audit(actor: string, action: string) {
   await Audit.create({ actor, action });
 }
@@ -101,20 +103,22 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
 
     if (!record) failedRecordUpdate.$inc = { attempts: 1 };
 
-    const [resetQueue, failedRecord] = await Promise.all([
-      InvoiceQueue.findByIdAndUpdate(
-        queue._id,
-        { $set: { status: 'queued' } },
-        { new: true, runValidators: true }
-      ),
-      InvoiceRecord.findOneAndUpdate(
-        { invoiceQueueId: queue._id },
-        failedRecordUpdate,
-        { new: true, upsert: true, runValidators: true }
-      ),
-    ]);
+    const failedRecord = await InvoiceRecord.findOneAndUpdate(
+      { invoiceQueueId: queue._id },
+      failedRecordUpdate,
+      { new: true, upsert: true, runValidators: true }
+    );
+    const maxAttemptsReached = (failedRecord?.attempts || 0) >= MAX_INVOICE_PROCESSING_ATTEMPTS;
+    const resetQueue = await InvoiceQueue.findByIdAndUpdate(
+      queue._id,
+      { $set: { status: maxAttemptsReached ? 'cancelled' : 'queued' } },
+      { new: true, runValidators: true }
+    );
 
     await audit(actor, 'INVOICE_PROCESSING_FAILED');
+    if (maxAttemptsReached) {
+      await audit(actor, 'INVOICE_PROCESSING_MAX_ATTEMPTS_REACHED');
+    }
 
     return {
       ok: false,

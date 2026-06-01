@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../middlewares/auth';
 import { requireRole } from '../middlewares/requireRole';
 import { AuctionResultStatus, AuctionResult } from '../../domain/auctionResults/auctionResult.model';
+import { Audit } from '../../domain/audit/audit.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceRecord } from '../../domain/invoiceRecords/invoiceRecord.model';
@@ -62,6 +63,27 @@ router.post('/fiscal/queue/process-next', requireAuth, requireRole('admin', 'sup
   });
 });
 
+router.post('/fiscal/queue/recover-stuck', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const user = (req as any).user;
+  const cutoff = new Date(Date.now() - 15 * 60_000);
+  const stuckQueues = await InvoiceQueue.find({
+    status: 'processing',
+    updatedAt: { $lt: cutoff },
+  }).select('_id');
+  const ids = stuckQueues.map((queue) => queue._id);
+
+  if (ids.length > 0) {
+    await InvoiceQueue.updateMany(
+      { _id: { $in: ids } },
+      { $set: { status: 'queued' } },
+      { runValidators: true }
+    );
+    await Audit.create({ actor: user?.sub || 'system', action: 'INVOICE_QUEUE_RECOVERED' });
+  }
+
+  res.json({ recoveredCount: ids.length });
+});
+
 router.post('/fiscal/queue/:id/process', requireAuth, requireRole('admin', 'super'), async (req, res) => {
   const user = (req as any).user;
   const result = await processInvoiceQueue({
@@ -77,6 +99,81 @@ router.post('/fiscal/queue/:id/process', requireAuth, requireRole('admin', 'supe
     invoiceQueue: result.invoiceQueue,
     invoiceRecord: result.invoiceRecord,
   });
+});
+
+router.post('/fiscal/queue/:id/cancel', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const user = (req as any).user;
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid invoice queue id' });
+  }
+
+  const queue = await InvoiceQueue.findById(id);
+  if (!queue) return res.status(404).json({ error: 'Not found' });
+  if (!['queued', 'processing'].includes(queue.status)) {
+    return res.status(409).json({ error: 'Invoice queue cannot be cancelled' });
+  }
+
+  const cancelledQueue = await InvoiceQueue.findOneAndUpdate(
+    { _id: queue._id, status: { $in: ['queued', 'processing'] } },
+    { $set: { status: 'cancelled' } },
+    { new: true, runValidators: true }
+  );
+  if (!cancelledQueue) {
+    return res.status(409).json({ error: 'Invoice queue cannot be cancelled' });
+  }
+
+  const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id });
+  const invoiceRecord = record && record.status !== 'completed'
+    ? await InvoiceRecord.findByIdAndUpdate(
+        record._id,
+        { $set: { status: 'failed', lastError: 'Cancelled by admin' } },
+        { new: true, runValidators: true }
+      )
+    : record;
+
+  await Audit.create({ actor: user?.sub || 'system', action: 'INVOICE_QUEUE_CANCELLED' });
+
+  res.json({ invoiceQueue: cancelledQueue, invoiceRecord });
+});
+
+router.post('/fiscal/invoice-records/:id/retry', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const user = (req as any).user;
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid invoice record id' });
+  }
+
+  const record = await InvoiceRecord.findById(id);
+  if (!record) return res.status(404).json({ error: 'Not found' });
+  if (record.status !== 'failed') {
+    return res.status(409).json({ error: 'Invoice record is not failed' });
+  }
+
+  const queue = await InvoiceQueue.findById(record.invoiceQueueId);
+  if (!queue) return res.status(404).json({ error: 'Invoice queue not found' });
+  if (['cancelled', 'completed'].includes(queue.status)) {
+    return res.status(409).json({ error: 'Invoice queue cannot be retried' });
+  }
+
+  const invoiceQueue = await InvoiceQueue.findOneAndUpdate(
+    { _id: queue._id, status: { $nin: ['cancelled', 'completed'] } },
+    { $set: { status: 'queued' } },
+    { new: true, runValidators: true }
+  );
+  if (!invoiceQueue) {
+    return res.status(409).json({ error: 'Invoice queue cannot be retried' });
+  }
+
+  const invoiceRecord = await InvoiceRecord.findByIdAndUpdate(
+    record._id,
+    { $unset: { lastError: '' } },
+    { new: true, runValidators: true }
+  );
+
+  await Audit.create({ actor: user?.sub || 'system', action: 'INVOICE_PROCESSING_RETRY_REQUESTED' });
+
+  res.json({ invoiceQueue, invoiceRecord });
 });
 
 router.get('/fiscal/invoice-records', requireAuth, requireRole('admin', 'super'), async (req, res) => {
