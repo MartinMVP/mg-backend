@@ -6,6 +6,7 @@ import { FiscalProfile } from '../../domain/fiscalProfiles/fiscalProfile.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceQueue } from '../../domain/invoiceQueue/invoiceQueue.model';
+import { InvoiceRecord } from '../../domain/invoiceRecords/invoiceRecord.model';
 import { Transaction, TransactionStatus } from '../../domain/transactions/transaction.model';
 import { bearer, createAccessToken } from '../../test/helpers/auth';
 import { createLiveAuction, createTestListing, createTestUser } from '../../test/helpers/factories';
@@ -661,6 +662,64 @@ describe('POST /admin/fiscal/transactions/:id/queue', () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect(second.body._id).toBe(first.body._id);
+    expect(await InvoiceQueue.countDocuments({ transactionId: transaction._id })).toBe(1);
+  });
+
+  it('blocks requeue when the transaction already has a completed queue', async () => {
+    const token = await authToken('admin');
+    const transaction = await createQueueCandidate();
+    const [draft, snapshot] = await Promise.all([
+      InvoiceDraft.findOne({ transactionId: transaction._id }),
+      FiscalSnapshot.findOne({ transactionId: transaction._id }),
+    ]);
+    await InvoiceQueue.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft?._id,
+      fiscalSnapshotId: snapshot?._id,
+      status: 'completed',
+      queuedAt: new Date(),
+      processedAt: new Date(),
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'Transaction already has a completed invoice queue' });
+    expect(await InvoiceQueue.countDocuments({ transactionId: transaction._id })).toBe(1);
+  });
+
+  it('blocks requeue when the transaction already has an issued invoice record', async () => {
+    const token = await authToken('admin');
+    const transaction = await createQueueCandidate();
+    const [draft, snapshot] = await Promise.all([
+      InvoiceDraft.findOne({ transactionId: transaction._id }),
+      FiscalSnapshot.findOne({ transactionId: transaction._id }),
+    ]);
+    const queue = await InvoiceQueue.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft?._id,
+      fiscalSnapshotId: snapshot?._id,
+      status: 'cancelled',
+      queuedAt: new Date(),
+    });
+    await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft?._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      lifecycleStatus: 'issued',
+      issuedAt: new Date(),
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/transactions/${transaction._id}/queue`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'Transaction already has an issued invoice record' });
     expect(await InvoiceQueue.countDocuments({ transactionId: transaction._id })).toBe(1);
   });
 

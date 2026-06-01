@@ -227,6 +227,8 @@ describe('admin fiscal invoice processing', () => {
         ],
       },
     }).distinct('action');
+    const completedAudit = await Audit.findOne({ action: 'INVOICE_PROCESSING_COMPLETED' });
+    const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id });
 
     expect(res.status).toBe(200);
     expect(actions).toEqual(expect.arrayContaining([
@@ -234,6 +236,9 @@ describe('admin fiscal invoice processing', () => {
       'INVOICE_PROCESSING_STARTED',
       'INVOICE_PROCESSING_COMPLETED',
     ]));
+    expect(String(completedAudit?.transactionId)).toBe(String(queue.transactionId));
+    expect(String(completedAudit?.invoiceRecordId)).toBe(String(record?._id));
+    expect(String(completedAudit?.invoiceQueueId)).toBe(String(queue._id));
   });
 
   it('marks record failed, resets queue, stores lastError, and audits failed when processing throws during audit', async () => {
@@ -256,6 +261,9 @@ describe('admin fiscal invoice processing', () => {
     expect(record?.attempts).toBe(1);
     expect(record?.lastError).toBe('Audit unavailable');
     expect(failedAudit).toBeTruthy();
+    expect(String(failedAudit?.transactionId)).toBe(String(queue.transactionId));
+    expect(String(failedAudit?.invoiceRecordId)).toBe(String(record?._id));
+    expect(String(failedAudit?.invoiceQueueId)).toBe(String(queue._id));
   });
 
   it('marks record failed and resets queue when invoice record creation throws', async () => {
@@ -1141,6 +1149,37 @@ describe('admin fiscal invoice processing', () => {
     expect(freshRecord?.providerMessage).toBe('Mock invoice issued');
     expect(freshRecord?.simulatedExternalId).toBe(`mock-${String(queue._id)}`);
     expect(audit).toBeTruthy();
+    expect(String(audit?.transactionId)).toBe(String(transaction._id));
+    expect(String(audit?.invoiceRecordId)).toBe(String(record._id));
+    expect(String(audit?.invoiceQueueId)).toBe(String(queue._id));
+  });
+
+  it('claims issuing before provider call and blocks concurrent issue requests', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      processedAt: new Date(),
+    });
+
+    const responses = await Promise.all([
+      request(app)
+        .post(`/admin/fiscal/invoice-records/${record._id}/issue`)
+        .set('Authorization', bearer(token)),
+      request(app)
+        .post(`/admin/fiscal/invoice-records/${record._id}/issue`)
+        .set('Authorization', bearer(token)),
+    ]);
+    const statuses = responses.map((res) => res.status).sort();
+    const freshRecord = await InvoiceRecord.findById(record._id).lean();
+
+    expect(statuses).toEqual([200, 409]);
+    expect(freshRecord?.lifecycleStatus).toBe('issued');
+    expect(await Audit.countDocuments({ action: 'INVOICE_ISSUED', invoiceRecordId: record._id })).toBe(1);
   });
 
   it('blocks duplicate invoice record issue', async () => {
@@ -1190,6 +1229,38 @@ describe('admin fiscal invoice processing', () => {
     expect(freshRecord?.providerStatus).toBe('cancelled');
     expect(freshRecord?.providerMessage).toBe('Mock cancellation successful');
     expect(audit).toBeTruthy();
+    expect(String(audit?.transactionId)).toBe(String(transaction._id));
+    expect(String(audit?.invoiceRecordId)).toBe(String(record._id));
+    expect(String(audit?.invoiceQueueId)).toBe(String(queue._id));
+  });
+
+  it('claims cancelling before provider call and blocks concurrent cancel requests', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      lifecycleStatus: 'issued',
+      issuedAt: new Date(),
+    });
+
+    const responses = await Promise.all([
+      request(app)
+        .post(`/admin/fiscal/invoice-records/${record._id}/cancel`)
+        .set('Authorization', bearer(token)),
+      request(app)
+        .post(`/admin/fiscal/invoice-records/${record._id}/cancel`)
+        .set('Authorization', bearer(token)),
+    ]);
+    const statuses = responses.map((res) => res.status).sort();
+    const freshRecord = await InvoiceRecord.findById(record._id).lean();
+
+    expect(statuses).toEqual([200, 409]);
+    expect(freshRecord?.lifecycleStatus).toBe('cancelled');
+    expect(await Audit.countDocuments({ action: 'INVOICE_CANCELLED', invoiceRecordId: record._id })).toBe(1);
   });
 
   it('blocks duplicate invoice record cancellation', async () => {
@@ -1259,5 +1330,41 @@ describe('admin fiscal invoice processing', () => {
     expect(res.status).toBe(200);
     expect(res.body.invoiceRecord.lifecycleStatus).toBe('issued');
     expect(res.body.invoiceRecord.issuedAt).toBeTruthy();
+  });
+
+  it('uses direct audit references in invoice record history', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const other = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      lifecycleStatus: 'issued',
+      issuedAt: new Date(),
+    });
+    await Audit.create({
+      actor: 'system',
+      action: 'INVOICE_ISSUED',
+      transactionId: transaction._id,
+      invoiceRecordId: record._id,
+      invoiceQueueId: queue._id,
+    });
+    await Audit.create({
+      actor: 'system',
+      action: 'INVOICE_ISSUED',
+      transactionId: other.transaction._id,
+      invoiceQueueId: other.queue._id,
+    });
+
+    const res = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/history`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.auditEvents.map((event: any) => String(event.invoiceRecordId))).toContain(String(record._id));
+    expect(res.body.auditEvents.map((event: any) => String(event.invoiceQueueId))).not.toContain(String(other.queue._id));
   });
 });

@@ -13,8 +13,14 @@ type ProcessInvoiceQueueOptions = {
 
 export const MAX_INVOICE_PROCESSING_ATTEMPTS = 3;
 
-async function audit(actor: string, action: string) {
-  await Audit.create({ actor, action });
+type InvoiceAuditRefs = {
+  transactionId?: Types.ObjectId;
+  invoiceRecordId?: Types.ObjectId;
+  invoiceQueueId?: Types.ObjectId;
+};
+
+async function audit(actor: string, action: string, refs: InvoiceAuditRefs = {}) {
+  await Audit.create({ actor, action, ...refs });
 }
 
 export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = {}) {
@@ -52,7 +58,10 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
 
   let record: any = null;
   try {
-    await audit(actor, 'INVOICE_QUEUE_CLAIMED');
+    await audit(actor, 'INVOICE_QUEUE_CLAIMED', {
+      transactionId: queue.transactionId,
+      invoiceQueueId: queue._id,
+    });
 
     record = await InvoiceRecord.findOneAndUpdate(
       { invoiceQueueId: queue._id },
@@ -71,7 +80,11 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
       { new: true, upsert: true, runValidators: true }
     );
 
-    await audit(actor, 'INVOICE_PROCESSING_STARTED');
+    await audit(actor, 'INVOICE_PROCESSING_STARTED', {
+      transactionId: queue.transactionId,
+      invoiceRecordId: record._id,
+      invoiceQueueId: queue._id,
+    });
 
     const providerInput = {
       transactionId: queue.transactionId,
@@ -112,7 +125,11 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
       ),
     ]);
 
-    await audit(actor, 'INVOICE_PROCESSING_COMPLETED');
+    await audit(actor, 'INVOICE_PROCESSING_COMPLETED', {
+      transactionId: queue.transactionId,
+      invoiceRecordId: record._id,
+      invoiceQueueId: queue._id,
+    });
 
     return {
       ok: true,
@@ -150,9 +167,17 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
       { new: true, runValidators: true }
     );
 
-    await audit(actor, 'INVOICE_PROCESSING_FAILED');
+    await audit(actor, 'INVOICE_PROCESSING_FAILED', {
+      transactionId: queue.transactionId,
+      invoiceRecordId: failedRecord._id,
+      invoiceQueueId: queue._id,
+    });
     if (maxAttemptsReached) {
-      await audit(actor, 'INVOICE_PROCESSING_MAX_ATTEMPTS_REACHED');
+      await audit(actor, 'INVOICE_PROCESSING_MAX_ATTEMPTS_REACHED', {
+        transactionId: queue.transactionId,
+        invoiceRecordId: failedRecord._id,
+        invoiceQueueId: queue._id,
+      });
     }
 
     return {

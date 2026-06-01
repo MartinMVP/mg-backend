@@ -8,7 +8,9 @@ export type InvoiceRecordStatus =
 
 export type InvoiceRecordLifecycleStatus =
   | 'pending'
+  | 'issuing'
   | 'issued'
+  | 'cancelling'
   | 'cancelled';
 
 export interface IInvoiceRecord {
@@ -52,7 +54,7 @@ const InvoiceRecordSchema = new Schema<IInvoiceRecord>(
     cancelledAt: { type: Date },
     lifecycleStatus: {
       type: String,
-      enum: ['pending', 'issued', 'cancelled'],
+      enum: ['pending', 'issuing', 'issued', 'cancelling', 'cancelled'],
       default: 'pending',
       index: true,
     },

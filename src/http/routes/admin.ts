@@ -73,6 +73,30 @@ function percentage(part: number, total: number) {
   return Math.round((part / total) * 10_000) / 100;
 }
 
+function invoiceAuditFilter(refs: {
+  transactionId?: unknown;
+  invoiceRecordId?: unknown;
+  invoiceQueueId?: unknown;
+}) {
+  const directRefs: Record<string, unknown>[] = [];
+
+  if (refs.transactionId) directRefs.push({ transactionId: refs.transactionId });
+  if (refs.invoiceRecordId) directRefs.push({ invoiceRecordId: refs.invoiceRecordId });
+  if (refs.invoiceQueueId) directRefs.push({ invoiceQueueId: refs.invoiceQueueId });
+
+  return {
+    action: { $in: invoiceAuditActions },
+    $or: [
+      ...directRefs,
+      {
+        transactionId: { $exists: false },
+        invoiceRecordId: { $exists: false },
+        invoiceQueueId: { $exists: false },
+      },
+    ],
+  };
+}
+
 // Solo admin y super
 router.get('/ping', requireAuth, requireRole('admin', 'super'), (_req, res) => {
   res.json({ ok: true, area: 'admin', ts: new Date().toISOString() });
@@ -207,7 +231,11 @@ router.get('/fiscal/invoice-records/:id/history', requireAuth, requireRole('admi
   const [invoiceQueue, transaction, auditEvents] = await Promise.all([
     InvoiceQueue.findById(invoiceRecord.invoiceQueueId).lean(),
     Transaction.findById(invoiceRecord.transactionId).lean(),
-    Audit.find({ action: { $in: invoiceAuditActions } }).sort({ createdAt: -1 }).limit(100).lean(),
+    Audit.find(invoiceAuditFilter({
+      transactionId: invoiceRecord.transactionId,
+      invoiceRecordId: invoiceRecord._id,
+      invoiceQueueId: invoiceRecord.invoiceQueueId,
+    })).sort({ createdAt: -1 }).limit(100).lean(),
   ]);
 
   res.json({
@@ -360,20 +388,14 @@ router.post('/fiscal/invoice-records/:id/issue', requireAuth, requireRole('admin
   if (record.lifecycleStatus === 'issued') {
     return res.status(409).json({ error: 'Invoice record already issued' });
   }
+  if (record.lifecycleStatus === 'issuing') {
+    return res.status(409).json({ error: 'Invoice record is already issuing' });
+  }
   if (record.lifecycleStatus === 'cancelled') {
     return res.status(409).json({ error: 'Invoice record is cancelled' });
   }
 
-  const issueResult = await mockFiscalProvider.issueInvoice({
-    transactionId: record.transactionId,
-    invoiceDraftId: record.invoiceDraftId,
-    invoiceQueueId: record.invoiceQueueId,
-  });
-  if (!issueResult.ok) {
-    return res.status(409).json({ error: issueResult.providerMessage });
-  }
-
-  const invoiceRecord = await InvoiceRecord.findOneAndUpdate(
+  const issuingRecord = await InvoiceRecord.findOneAndUpdate(
     {
       _id: record._id,
       status: 'completed',
@@ -382,6 +404,36 @@ router.post('/fiscal/invoice-records/:id/issue', requireAuth, requireRole('admin
         { lifecycleStatus: 'pending' },
       ],
     },
+    { $set: { lifecycleStatus: 'issuing' } },
+    { new: true, runValidators: true }
+  );
+  if (!issuingRecord) {
+    return res.status(409).json({ error: 'Invoice record cannot be issued' });
+  }
+
+  const issueResult = await mockFiscalProvider.issueInvoice({
+    transactionId: issuingRecord.transactionId,
+    invoiceDraftId: issuingRecord.invoiceDraftId,
+    invoiceQueueId: issuingRecord.invoiceQueueId,
+  });
+  if (!issueResult.ok) {
+    await InvoiceRecord.findOneAndUpdate(
+      { _id: issuingRecord._id, lifecycleStatus: 'issuing' },
+      {
+        $set: {
+          lifecycleStatus: 'pending',
+          providerName: mockFiscalProvider.name,
+          providerStatus: issueResult.providerStatus,
+          providerMessage: issueResult.providerMessage,
+        },
+      },
+      { runValidators: true }
+    );
+    return res.status(409).json({ error: issueResult.providerMessage });
+  }
+
+  const invoiceRecord = await InvoiceRecord.findOneAndUpdate(
+    { _id: issuingRecord._id, status: 'completed', lifecycleStatus: 'issuing' },
     {
       $set: {
         lifecycleStatus: 'issued',
@@ -398,7 +450,13 @@ router.post('/fiscal/invoice-records/:id/issue', requireAuth, requireRole('admin
     return res.status(409).json({ error: 'Invoice record cannot be issued' });
   }
 
-  await Audit.create({ actor: user?.sub || 'system', action: 'INVOICE_ISSUED' });
+  await Audit.create({
+    actor: user?.sub || 'system',
+    action: 'INVOICE_ISSUED',
+    transactionId: invoiceRecord.transactionId,
+    invoiceRecordId: invoiceRecord._id,
+    invoiceQueueId: invoiceRecord.invoiceQueueId,
+  });
 
   res.json(invoiceRecord);
 });
@@ -415,21 +473,45 @@ router.post('/fiscal/invoice-records/:id/cancel', requireAuth, requireRole('admi
   if (record.lifecycleStatus === 'cancelled') {
     return res.status(409).json({ error: 'Invoice record already cancelled' });
   }
+  if (record.lifecycleStatus === 'cancelling') {
+    return res.status(409).json({ error: 'Invoice record is already cancelling' });
+  }
   if (record.lifecycleStatus !== 'issued') {
     return res.status(409).json({ error: 'Invoice record is not issued' });
   }
 
+  const cancellingRecord = await InvoiceRecord.findOneAndUpdate(
+    { _id: record._id, lifecycleStatus: 'issued' },
+    { $set: { lifecycleStatus: 'cancelling' } },
+    { new: true, runValidators: true }
+  );
+  if (!cancellingRecord) {
+    return res.status(409).json({ error: 'Invoice record cannot be cancelled' });
+  }
+
   const cancelResult = await mockFiscalProvider.cancelInvoice({
-    transactionId: record.transactionId,
-    invoiceDraftId: record.invoiceDraftId,
-    invoiceQueueId: record.invoiceQueueId,
+    transactionId: cancellingRecord.transactionId,
+    invoiceDraftId: cancellingRecord.invoiceDraftId,
+    invoiceQueueId: cancellingRecord.invoiceQueueId,
   });
   if (!cancelResult.ok) {
+    await InvoiceRecord.findOneAndUpdate(
+      { _id: cancellingRecord._id, lifecycleStatus: 'cancelling' },
+      {
+        $set: {
+          lifecycleStatus: 'issued',
+          providerName: mockFiscalProvider.name,
+          providerStatus: cancelResult.providerStatus,
+          providerMessage: cancelResult.providerMessage,
+        },
+      },
+      { runValidators: true }
+    );
     return res.status(409).json({ error: cancelResult.providerMessage });
   }
 
   const invoiceRecord = await InvoiceRecord.findOneAndUpdate(
-    { _id: record._id, lifecycleStatus: 'issued' },
+    { _id: cancellingRecord._id, lifecycleStatus: 'cancelling' },
     {
       $set: {
         lifecycleStatus: 'cancelled',
@@ -445,7 +527,13 @@ router.post('/fiscal/invoice-records/:id/cancel', requireAuth, requireRole('admi
     return res.status(409).json({ error: 'Invoice record cannot be cancelled' });
   }
 
-  await Audit.create({ actor: user?.sub || 'system', action: 'INVOICE_CANCELLED' });
+  await Audit.create({
+    actor: user?.sub || 'system',
+    action: 'INVOICE_CANCELLED',
+    transactionId: invoiceRecord.transactionId,
+    invoiceRecordId: invoiceRecord._id,
+    invoiceQueueId: invoiceRecord.invoiceQueueId,
+  });
 
   res.json(invoiceRecord);
 });
@@ -566,7 +654,7 @@ router.get('/fiscal/transactions/:id/history', requireAuth, requireRole('admin',
     InvoiceDraft.findOne({ transactionId: transaction._id }).lean(),
     InvoiceQueue.find({ transactionId: transaction._id }).sort({ createdAt: 1 }).lean(),
     InvoiceRecord.find({ transactionId: transaction._id }).sort({ createdAt: 1 }).lean(),
-    Audit.find({ action: { $in: invoiceAuditActions } }).sort({ createdAt: -1 }).limit(100).lean(),
+    Audit.find(invoiceAuditFilter({ transactionId: transaction._id })).sort({ createdAt: -1 }).limit(100).lean(),
   ]);
 
   res.json({
@@ -600,6 +688,22 @@ router.post('/fiscal/transactions/:id/queue', requireAuth, requireRole('admin', 
 
   if (!fiscalSnapshot || !invoiceDraft) {
     return res.status(409).json({ error: 'Transaction is not ready for invoice queue', readiness });
+  }
+
+  const completedQueue = await InvoiceQueue.exists({
+    transactionId: transaction._id,
+    status: 'completed',
+  });
+  if (completedQueue) {
+    return res.status(409).json({ error: 'Transaction already has a completed invoice queue' });
+  }
+
+  const issuedRecord = await InvoiceRecord.exists({
+    transactionId: transaction._id,
+    lifecycleStatus: 'issued',
+  });
+  if (issuedRecord) {
+    return res.status(409).json({ error: 'Transaction already has an issued invoice record' });
   }
 
   const queue = await InvoiceQueue.findOneAndUpdate(
