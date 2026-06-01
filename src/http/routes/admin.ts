@@ -30,6 +30,16 @@ const transactionStatuses: TransactionStatus[] = [
 const invoiceRecordStatuses = ['created', 'processing', 'completed', 'failed'];
 const invoiceQueueStatuses = ['queued', 'processing', 'completed', 'cancelled'];
 const STUCK_PROCESSING_THRESHOLD_MS = 15 * 60_000;
+const invoiceAuditActions = [
+  'INVOICE_QUEUE_CLAIMED',
+  'INVOICE_PROCESSING_STARTED',
+  'INVOICE_PROCESSING_COMPLETED',
+  'INVOICE_PROCESSING_FAILED',
+  'INVOICE_PROCESSING_MAX_ATTEMPTS_REACHED',
+  'INVOICE_PROCESSING_RETRY_REQUESTED',
+  'INVOICE_QUEUE_CANCELLED',
+  'INVOICE_QUEUE_RECOVERED',
+];
 
 function parsePagination(query: any) {
   const page = Math.max(1, Number(query.page) || 1);
@@ -55,9 +65,63 @@ function countsFromAggregation(statuses: string[], rows: Array<{ _id: string; co
   return counts;
 }
 
+function percentage(part: number, total: number) {
+  if (total <= 0) return 0;
+  return Math.round((part / total) * 10_000) / 100;
+}
+
 // Solo admin y super
 router.get('/ping', requireAuth, requireRole('admin', 'super'), (_req, res) => {
   res.json({ ok: true, area: 'admin', ts: new Date().toISOString() });
+});
+
+router.get('/fiscal/analytics/processing', requireAuth, requireRole('admin', 'super'), async (_req, res) => {
+  const now = Date.now();
+  const last24h = new Date(now - 24 * 60 * 60_000);
+  const last7d = new Date(now - 7 * 24 * 60 * 60_000);
+  const last30d = new Date(now - 30 * 24 * 60 * 60_000);
+  const [
+    queueRows,
+    recordRows,
+    attemptsRows,
+    maxAttemptsRows,
+    processedLast24h,
+    processedLast7d,
+    processedLast30d,
+  ] = await Promise.all([
+    InvoiceQueue.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+    InvoiceRecord.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+    InvoiceRecord.aggregate([{ $group: { _id: null, total: { $sum: '$attempts' }, count: { $sum: 1 } } }]),
+    InvoiceRecord.aggregate([{ $group: { _id: null, max: { $max: '$attempts' } } }]),
+    InvoiceRecord.countDocuments({ status: 'completed', processedAt: { $gte: last24h } }),
+    InvoiceRecord.countDocuments({ status: 'completed', processedAt: { $gte: last7d } }),
+    InvoiceRecord.countDocuments({ status: 'completed', processedAt: { $gte: last30d } }),
+  ]);
+  const queueCounts = countsFromAggregation(invoiceQueueStatuses, queueRows);
+  const recordCounts = countsFromAggregation(invoiceRecordStatuses, recordRows);
+  const invoiceRecordTotal = Object.values(recordCounts).reduce((total: number, count: any) => total + count, 0);
+  const completedRecords = Number((recordCounts as any).completed || 0);
+  const failedRecords = Number((recordCounts as any).failed || 0);
+  const attemptsSummary = attemptsRows[0] || { total: 0, count: 0 };
+
+  res.json({
+    invoiceQueue: {
+      total: Object.values(queueCounts).reduce((total: number, count: any) => total + count, 0),
+      ...queueCounts,
+    },
+    invoiceRecord: {
+      total: invoiceRecordTotal,
+      completed: completedRecords,
+      failed: failedRecords,
+    },
+    successRate: percentage(completedRecords, invoiceRecordTotal),
+    failureRate: percentage(failedRecords, invoiceRecordTotal),
+    averageAttempts: attemptsSummary.count ? attemptsSummary.total / attemptsSummary.count : 0,
+    maxAttemptsObserved: maxAttemptsRows[0]?.max || 0,
+    processedLast24h,
+    processedLast7d,
+    processedLast30d,
+  });
 });
 
 router.get('/fiscal/processing/summary', requireAuth, requireRole('admin', 'super'), async (_req, res) => {
@@ -126,6 +190,29 @@ router.get('/fiscal/processing/stuck', requireAuth, requireRole('admin', 'super'
     .lean();
 
   res.json({ page, limit, items });
+});
+
+router.get('/fiscal/invoice-records/:id/history', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid invoice record id' });
+  }
+
+  const invoiceRecord = await InvoiceRecord.findById(id).lean();
+  if (!invoiceRecord) return res.status(404).json({ error: 'Not found' });
+
+  const [invoiceQueue, transaction, auditEvents] = await Promise.all([
+    InvoiceQueue.findById(invoiceRecord.invoiceQueueId).lean(),
+    Transaction.findById(invoiceRecord.transactionId).lean(),
+    Audit.find({ action: { $in: invoiceAuditActions } }).sort({ createdAt: -1 }).limit(100).lean(),
+  ]);
+
+  res.json({
+    invoiceRecord,
+    invoiceQueue,
+    transaction,
+    auditEvents,
+  });
 });
 
 router.post('/fiscal/queue/process-next', requireAuth, requireRole('admin', 'super'), async (req, res) => {
@@ -348,6 +435,39 @@ router.get('/fiscal/transactions/:id/readiness', requireAuth, requireRole('admin
   res.json({
     transactionId: id,
     readiness,
+  });
+});
+
+router.get('/fiscal/transactions/:id/history', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid transaction id' });
+  }
+
+  const transaction = await Transaction.findById(id).lean();
+  if (!transaction) return res.status(404).json({ error: 'Not found' });
+
+  const [
+    fiscalSnapshot,
+    invoiceDraft,
+    invoiceQueues,
+    invoiceRecords,
+    auditEvents,
+  ] = await Promise.all([
+    FiscalSnapshot.findOne({ transactionId: transaction._id }).lean(),
+    InvoiceDraft.findOne({ transactionId: transaction._id }).lean(),
+    InvoiceQueue.find({ transactionId: transaction._id }).sort({ createdAt: 1 }).lean(),
+    InvoiceRecord.find({ transactionId: transaction._id }).sort({ createdAt: 1 }).lean(),
+    Audit.find({ action: { $in: invoiceAuditActions } }).sort({ createdAt: -1 }).limit(100).lean(),
+  ]);
+
+  res.json({
+    transaction,
+    fiscalSnapshot,
+    invoiceDraft,
+    invoiceQueues,
+    invoiceRecords,
+    auditEvents,
   });
 });
 

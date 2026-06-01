@@ -799,4 +799,198 @@ describe('admin fiscal invoice processing', () => {
     expect(afterRecord?.attempts).toBe(beforeRecord?.attempts);
     expect(afterRecord?.lastError).toBe(beforeRecord?.lastError);
   });
+
+  it('protects processing history and analytics endpoints', async () => {
+    const token = await authToken('user');
+    const { transaction, queue, draft } = await createQueuedInvoice();
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'failed',
+      attempts: 1,
+    });
+
+    const noAuth = await request(app).get(`/admin/fiscal/transactions/${transaction._id}/history`);
+    const userTransactionHistory = await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/history`)
+      .set('Authorization', bearer(token));
+    const userRecordHistory = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/history`)
+      .set('Authorization', bearer(token));
+    const userAnalytics = await request(app)
+      .get('/admin/fiscal/analytics/processing')
+      .set('Authorization', bearer(token));
+
+    expect(noAuth.status).toBe(401);
+    expect(userTransactionHistory.status).toBe(403);
+    expect(userRecordHistory.status).toBe(403);
+    expect(userAnalytics.status).toBe(403);
+  });
+
+  it('allows admin and super to read processing analytics', async () => {
+    const adminToken = await authToken('admin');
+    const superToken = await authToken('super');
+
+    const adminRes = await request(app)
+      .get('/admin/fiscal/analytics/processing')
+      .set('Authorization', bearer(adminToken));
+    const superRes = await request(app)
+      .get('/admin/fiscal/analytics/processing')
+      .set('Authorization', bearer(superToken));
+
+    expect(adminRes.status).toBe(200);
+    expect(superRes.status).toBe(200);
+  });
+
+  it('returns complete fiscal history for a transaction', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft, snapshot } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      processedAt: new Date(),
+    });
+    await Audit.create({ actor: 'system', action: 'INVOICE_PROCESSING_COMPLETED' });
+
+    const res = await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/history`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.transaction._id).toBe(String(transaction._id));
+    expect(res.body.fiscalSnapshot._id).toBe(String(snapshot._id));
+    expect(res.body.invoiceDraft._id).toBe(String(draft._id));
+    expect(res.body.invoiceQueues.map((item: any) => item._id)).toContain(String(queue._id));
+    expect(res.body.invoiceRecords.map((item: any) => item._id)).toContain(String(record._id));
+    expect(res.body.auditEvents.map((event: any) => event.action)).toContain('INVOICE_PROCESSING_COMPLETED');
+  });
+
+  it('returns complete fiscal history for an invoice record', async () => {
+    const token = await authToken('super');
+    const { transaction, queue, draft } = await createQueuedInvoice('processing');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'failed',
+      attempts: 2,
+      lastError: 'Failed',
+    });
+    await Audit.create({ actor: 'system', action: 'INVOICE_PROCESSING_FAILED' });
+
+    const res = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/history`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.invoiceRecord._id).toBe(String(record._id));
+    expect(res.body.invoiceQueue._id).toBe(String(queue._id));
+    expect(res.body.transaction._id).toBe(String(transaction._id));
+    expect(res.body.auditEvents.map((event: any) => event.action)).toContain('INVOICE_PROCESSING_FAILED');
+  });
+
+  it('returns processing analytics with correct counts and rates', async () => {
+    const token = await authToken('admin');
+    const queued = await createQueuedInvoice('queued');
+    const processing = await createQueuedInvoice('processing');
+    const completed = await createQueuedInvoice('completed');
+    const cancelled = await createQueuedInvoice('cancelled');
+    await InvoiceRecord.create({
+      transactionId: queued.transaction._id,
+      invoiceDraftId: queued.draft._id,
+      invoiceQueueId: queued.queue._id,
+      status: 'completed',
+      attempts: 1,
+      processedAt: new Date(),
+    });
+    await InvoiceRecord.create({
+      transactionId: processing.transaction._id,
+      invoiceDraftId: processing.draft._id,
+      invoiceQueueId: processing.queue._id,
+      status: 'completed',
+      attempts: 2,
+      processedAt: new Date(Date.now() - 2 * 24 * 60 * 60_000),
+    });
+    await InvoiceRecord.create({
+      transactionId: completed.transaction._id,
+      invoiceDraftId: completed.draft._id,
+      invoiceQueueId: completed.queue._id,
+      status: 'failed',
+      attempts: 3,
+      lastError: 'Failed',
+    });
+    await InvoiceRecord.create({
+      transactionId: cancelled.transaction._id,
+      invoiceDraftId: cancelled.draft._id,
+      invoiceQueueId: cancelled.queue._id,
+      status: 'processing',
+      attempts: 4,
+    });
+
+    const res = await request(app)
+      .get('/admin/fiscal/analytics/processing')
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.invoiceQueue).toMatchObject({
+      total: 4,
+      queued: 1,
+      processing: 1,
+      completed: 1,
+      cancelled: 1,
+    });
+    expect(res.body.invoiceRecord).toMatchObject({
+      total: 4,
+      completed: 2,
+      failed: 1,
+    });
+    expect(res.body.successRate).toBe(50);
+    expect(res.body.failureRate).toBe(25);
+    expect(res.body.averageAttempts).toBe(2.5);
+    expect(res.body.maxAttemptsObserved).toBe(4);
+    expect(res.body.processedLast24h).toBe(1);
+    expect(res.body.processedLast7d).toBe(2);
+    expect(res.body.processedLast30d).toBe(2);
+  });
+
+  it('does not modify documents when reading history and analytics endpoints', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('processing');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'failed',
+      attempts: 2,
+      lastError: 'Still failed',
+    });
+    const beforeTransaction = await Transaction.findById(transaction._id).lean();
+    const beforeQueue = await InvoiceQueue.findById(queue._id).lean();
+    const beforeRecord = await InvoiceRecord.findById(record._id).lean();
+
+    await request(app)
+      .get(`/admin/fiscal/transactions/${transaction._id}/history`)
+      .set('Authorization', bearer(token));
+    await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/history`)
+      .set('Authorization', bearer(token));
+    await request(app)
+      .get('/admin/fiscal/analytics/processing')
+      .set('Authorization', bearer(token));
+
+    const afterTransaction = await Transaction.findById(transaction._id).lean();
+    const afterQueue = await InvoiceQueue.findById(queue._id).lean();
+    const afterRecord = await InvoiceRecord.findById(record._id).lean();
+
+    expect(afterTransaction?.status).toBe(beforeTransaction?.status);
+    expect(afterQueue?.status).toBe(beforeQueue?.status);
+    expect(afterQueue?.processedAt).toEqual(beforeQueue?.processedAt);
+    expect(afterRecord?.status).toBe(beforeRecord?.status);
+    expect(afterRecord?.attempts).toBe(beforeRecord?.attempts);
+    expect(afterRecord?.lastError).toBe(beforeRecord?.lastError);
+  });
 });
