@@ -4,6 +4,8 @@ import { Types } from 'mongoose';
 import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { Audit } from '../../domain/audit/audit.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
+import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
+import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceQueue } from '../../domain/invoiceQueue/invoiceQueue.model';
 import { InvoiceRecord } from '../../domain/invoiceRecords/invoiceRecord.model';
@@ -172,6 +174,10 @@ describe('admin fiscal invoice processing', () => {
     expect(record).toBeTruthy();
     expect(record?.status).toBe('completed');
     expect(record?.processedAt).toBeTruthy();
+    expect(record?.providerName).toBe('mock');
+    expect(record?.providerStatus).toBe('issued');
+    expect(record?.providerMessage).toBe('Mock invoice issued');
+    expect(record?.simulatedExternalId).toBe(`mock-${String(queue._id)}`);
   });
 
   it('does not duplicate an invoice record', async () => {
@@ -992,5 +998,120 @@ describe('admin fiscal invoice processing', () => {
     expect(afterRecord?.status).toBe(beforeRecord?.status);
     expect(afterRecord?.attempts).toBe(beforeRecord?.attempts);
     expect(afterRecord?.lastError).toBe(beforeRecord?.lastError);
+  });
+
+  it('mock fiscal provider validates, issues, and cancels without real fiscal artifacts', async () => {
+    const { transaction, queue, draft } = await createQueuedInvoice();
+    const provider = new MockFiscalProvider();
+    const input = {
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+    };
+
+    const validation = await provider.validateInvoiceInput(input);
+    const issue = await provider.issueInvoice(input);
+    const cancellation = await provider.cancelInvoice(input);
+
+    expect(validation).toEqual({ ok: true, message: 'Mock validation successful' });
+    expect(issue).toMatchObject({
+      ok: true,
+      providerStatus: 'issued',
+      providerMessage: 'Mock invoice issued',
+      simulatedExternalId: `mock-${String(queue._id)}`,
+    });
+    expect(cancellation).toEqual({
+      ok: true,
+      providerStatus: 'cancelled',
+      providerMessage: 'Mock cancellation successful',
+    });
+    expect(JSON.stringify(issue)).not.toContain('xml');
+    expect(JSON.stringify(issue)).not.toContain('pdf');
+    expect(issue.simulatedExternalId).not.toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  });
+
+  it('mock fiscal provider can return a controlled issue failure', async () => {
+    const { transaction, queue, draft } = await createQueuedInvoice();
+    const provider = new MockFiscalProvider({ issueShouldFail: true });
+
+    const issue = await provider.issueInvoice({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+    });
+
+    expect(issue).toEqual({
+      ok: false,
+      providerStatus: 'failed',
+      providerMessage: 'Mock invoice issue failed',
+    });
+  });
+
+  it('invoice processor stores provider metadata from the mock provider', async () => {
+    const { queue } = await createQueuedInvoice();
+
+    const result = await processInvoiceQueue({
+      invoiceQueueId: queue._id,
+      actor: 'system',
+      provider: new MockFiscalProvider(),
+    });
+    const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id }).lean();
+
+    expect(result.ok).toBe(true);
+    expect(record?.providerName).toBe('mock');
+    expect(record?.providerStatus).toBe('issued');
+    expect(record?.providerMessage).toBe('Mock invoice issued');
+    expect(record?.simulatedExternalId).toBe(`mock-${String(queue._id)}`);
+    expect(record).not.toHaveProperty('xml');
+    expect(record).not.toHaveProperty('pdf');
+    expect(record?.simulatedExternalId).not.toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  });
+
+  it('provider failure leaves queue retryable before max attempts', async () => {
+    const { queue } = await createQueuedInvoice();
+
+    const result = await processInvoiceQueue({
+      invoiceQueueId: queue._id,
+      actor: 'system',
+      provider: new MockFiscalProvider({ issueShouldFail: true }),
+    });
+    const freshQueue = await InvoiceQueue.findById(queue._id);
+    const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id });
+
+    expect(result.ok).toBe(false);
+    expect(freshQueue?.status).toBe('queued');
+    expect(record?.status).toBe('failed');
+    expect(record?.attempts).toBe(1);
+    expect(record?.lastError).toBe('Mock invoice issue failed');
+    expect(record?.providerName).toBe('mock');
+    expect(record?.providerStatus).toBe('failed');
+    expect(record?.providerMessage).toBe('Mock invoice issue failed');
+  });
+
+  it('provider failure cancels queue when max attempts is reached', async () => {
+    const { queue } = await createQueuedInvoice();
+    await InvoiceRecord.create({
+      transactionId: queue.transactionId,
+      invoiceDraftId: queue.invoiceDraftId,
+      invoiceQueueId: queue._id,
+      status: 'failed',
+      attempts: 2,
+      lastError: 'Previous provider failure',
+    });
+
+    const result = await processInvoiceQueue({
+      invoiceQueueId: queue._id,
+      actor: 'system',
+      provider: new MockFiscalProvider({ issueShouldFail: true }),
+    });
+    const freshQueue = await InvoiceQueue.findById(queue._id);
+    const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id });
+
+    expect(result.ok).toBe(false);
+    expect(freshQueue?.status).toBe('cancelled');
+    expect(record?.status).toBe('failed');
+    expect(record?.attempts).toBe(3);
+    expect(record?.lastError).toBe('Mock invoice issue failed');
+    expect(record?.providerStatus).toBe('failed');
   });
 });

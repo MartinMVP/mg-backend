@@ -14,6 +14,10 @@ export interface IInvoiceRecord {
   attempts: number;
   lastError?: string;
   processedAt?: Date;
+  providerName?: string;
+  providerStatus?: string;
+  providerMessage?: string;
+  simulatedExternalId?: string;
 }
 
 const InvoiceRecordSchema = new Schema<IInvoiceRecord>(
@@ -36,6 +40,10 @@ const InvoiceRecordSchema = new Schema<IInvoiceRecord>(
     attempts: { type: Number, default: 0, min: 0 },
     lastError: { type: String, trim: true },
     processedAt: { type: Date },
+    providerName: { type: String, trim: true },
+    providerStatus: { type: String, trim: true },
+    providerMessage: { type: String, trim: true },
+    simulatedExternalId: { type: String, trim: true },
   },
   { timestamps: true }
 );

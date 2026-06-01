@@ -1,11 +1,14 @@
 import { Types } from 'mongoose';
 import { Audit } from '../audit/audit.model';
+import { FiscalProvider } from '../fiscalProviders/fiscalProvider.interface';
+import { mockFiscalProvider } from '../fiscalProviders/mockFiscalProvider';
 import { InvoiceQueue } from '../invoiceQueue/invoiceQueue.model';
 import { InvoiceRecord } from '../invoiceRecords/invoiceRecord.model';
 
 type ProcessInvoiceQueueOptions = {
   invoiceQueueId?: string | Types.ObjectId;
   actor?: string;
+  provider?: FiscalProvider;
 };
 
 export const MAX_INVOICE_PROCESSING_ATTEMPTS = 3;
@@ -16,6 +19,7 @@ async function audit(actor: string, action: string) {
 
 export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = {}) {
   const actor = options.actor || 'system';
+  const provider = options.provider || mockFiscalProvider;
   const queueFilter: Record<string, unknown> = { status: 'queued' };
 
   if (options.invoiceQueueId) {
@@ -69,6 +73,21 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
 
     await audit(actor, 'INVOICE_PROCESSING_STARTED');
 
+    const providerInput = {
+      transactionId: queue.transactionId,
+      invoiceDraftId: queue.invoiceDraftId,
+      invoiceQueueId: queue._id,
+    };
+    const validation = await provider.validateInvoiceInput(providerInput);
+    if (!validation.ok) {
+      throw new Error(validation.message);
+    }
+
+    const issueResult = await provider.issueInvoice(providerInput);
+    if (!issueResult.ok) {
+      throw new Error(issueResult.providerMessage);
+    }
+
     const now = new Date();
     const [completedQueue, completedRecord] = await Promise.all([
       InvoiceQueue.findByIdAndUpdate(
@@ -78,7 +97,17 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
       ),
       InvoiceRecord.findByIdAndUpdate(
         record._id,
-        { $set: { status: 'completed', processedAt: now }, $unset: { lastError: '' } },
+        {
+          $set: {
+            status: 'completed',
+            processedAt: now,
+            providerName: provider.name,
+            providerStatus: issueResult.providerStatus,
+            providerMessage: issueResult.providerMessage,
+            simulatedExternalId: issueResult.simulatedExternalId,
+          },
+          $unset: { lastError: '' },
+        },
         { new: true, runValidators: true }
       ),
     ]);
@@ -98,7 +127,13 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
         invoiceDraftId: queue.invoiceDraftId,
         invoiceQueueId: queue._id,
       },
-      $set: { status: 'failed', lastError: message },
+      $set: {
+        status: 'failed',
+        lastError: message,
+        providerName: provider.name,
+        providerStatus: 'failed',
+        providerMessage: message,
+      },
     };
 
     if (!record) failedRecordUpdate.$inc = { attempts: 1 };
