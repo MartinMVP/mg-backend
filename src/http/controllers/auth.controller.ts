@@ -56,8 +56,7 @@ export async function register(req: Request, res: Response) {
   const exists = await User.findOne({ email: normEmail });
   if (exists) return res.status(409).json({ error: 'Email already registered' });
 
-  const hash = await bcrypt.hash(password, 12);
-  const user = await User.create({ email: normEmail, password: hash, name, role: 'user' });
+  const user = await User.create({ email: normEmail, password, name, role: 'user' });
 
   await Audit.create({
     actor: String(user._id),
