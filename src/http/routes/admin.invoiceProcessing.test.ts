@@ -7,6 +7,7 @@ import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.mode
 import { getFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
 import { listFiscalProviders, resolveFiscalProvider } from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
+import { ProviderTrace } from '../../domain/fiscalProviders/providerTrace.model';
 import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceQueue } from '../../domain/invoiceQueue/invoiceQueue.model';
@@ -1446,5 +1447,118 @@ describe('admin fiscal invoice processing', () => {
     expect(res.status).toBe(200);
     expect(res.body.auditEvents.map((event: any) => String(event.invoiceRecordId))).toContain(String(record._id));
     expect(res.body.auditEvents.map((event: any) => String(event.invoiceQueueId))).not.toContain(String(other.queue._id));
+  });
+
+  it('creates provider traces when processing mock provider successfully', async () => {
+    const { queue } = await createQueuedInvoice();
+
+    const result = await processInvoiceQueue({ invoiceQueueId: queue._id });
+
+    expect(result.ok).toBe(true);
+    const traces = await ProviderTrace.find({ invoiceQueueId: queue._id }).sort({ operation: 1 }).lean();
+    expect(traces).toHaveLength(2);
+    expect(traces.map((trace) => trace.operation)).toEqual(expect.arrayContaining(['validate', 'issue']));
+    expect(traces.every((trace) => trace.status === 'success')).toBe(true);
+    expect(traces.every((trace) => typeof trace.durationMs === 'number')).toBe(true);
+    expect(traces.every((trace) => trace.providerName === 'mock')).toBe(true);
+    expect(traces.every((trace) => trace.attempt === 1)).toBe(true);
+  });
+
+  it('stores failed provider trace when mock provider returns a controlled failure', async () => {
+    const { queue } = await createQueuedInvoice();
+
+    const result = await processInvoiceQueue({
+      invoiceQueueId: queue._id,
+      provider: new MockFiscalProvider({ issueShouldFail: true }),
+    });
+
+    expect(result.ok).toBe(false);
+    const issueTrace = await ProviderTrace.findOne({ invoiceQueueId: queue._id, operation: 'issue' }).lean();
+    expect(issueTrace?.status).toBe('failed');
+    expect(issueTrace?.errorMessage).toBe('Mock invoice issue failed');
+    expect(issueTrace?.durationMs).toEqual(expect.any(Number));
+  });
+
+  it('sanitizes provider trace request and response payloads', async () => {
+    const { queue } = await createQueuedInvoice();
+
+    await processInvoiceQueue({ invoiceQueueId: queue._id });
+
+    const issueTrace = await ProviderTrace.findOne({ invoiceQueueId: queue._id, operation: 'issue' }).lean();
+    const serialized = JSON.stringify({
+      requestPayload: issueTrace?.requestPayload,
+      responsePayload: issueTrace?.responsePayload,
+    });
+
+    expect(serialized).not.toMatch(/credential|password|secret|token|apiKey|authorization/i);
+    expect(serialized).not.toMatch(/xml|pdf|uuid|sello|certificado|cadena|timbre/i);
+  });
+
+  it('protects provider trace list and detail endpoints', async () => {
+    const adminToken = await authToken('admin');
+    const userToken = await authToken('user');
+    const { queue } = await createQueuedInvoice();
+    await processInvoiceQueue({ invoiceQueueId: queue._id });
+    const trace = await ProviderTrace.findOne({ invoiceQueueId: queue._id }).lean();
+
+    const noAuthList = await request(app).get('/admin/fiscal/provider-traces');
+    const userList = await request(app)
+      .get('/admin/fiscal/provider-traces')
+      .set('Authorization', bearer(userToken));
+    const noAuthDetail = await request(app).get(`/admin/fiscal/provider-traces/${trace?._id}`);
+    const adminDetail = await request(app)
+      .get(`/admin/fiscal/provider-traces/${trace?._id}`)
+      .set('Authorization', bearer(adminToken));
+
+    expect(noAuthList.status).toBe(401);
+    expect(userList.status).toBe(403);
+    expect(noAuthDetail.status).toBe(401);
+    expect(adminDetail.status).toBe(200);
+    expect(adminDetail.body._id).toBe(String(trace?._id));
+  });
+
+  it('filters and paginates provider traces', async () => {
+    const token = await authToken('super');
+    const first = await createQueuedInvoice();
+    const second = await createQueuedInvoice();
+    await processInvoiceQueue({ invoiceQueueId: first.queue._id });
+    await processInvoiceQueue({
+      invoiceQueueId: second.queue._id,
+      provider: new MockFiscalProvider({ issueShouldFail: true }),
+    });
+
+    const failed = await request(app)
+      .get('/admin/fiscal/provider-traces?operation=issue&status=success&page=1&limit=1')
+      .set('Authorization', bearer(token));
+    const byQueue = await request(app)
+      .get(`/admin/fiscal/provider-traces?invoiceQueueId=${first.queue._id}`)
+      .set('Authorization', bearer(token));
+
+    expect(failed.status).toBe(200);
+    expect(failed.body.page).toBe(1);
+    expect(failed.body.limit).toBe(1);
+    expect(failed.body.items).toHaveLength(1);
+    expect(failed.body.items[0].operation).toBe('issue');
+    expect(failed.body.items[0].status).toBe('success');
+    expect(byQueue.status).toBe(200);
+    expect(byQueue.body.items.every((item: any) => item.invoiceQueueId === String(first.queue._id))).toBe(true);
+  });
+
+  it('keeps provider trace endpoints read-only', async () => {
+    const token = await authToken('admin');
+    const { queue } = await createQueuedInvoice();
+    await processInvoiceQueue({ invoiceQueueId: queue._id });
+    const trace = await ProviderTrace.findOne({ invoiceQueueId: queue._id }).lean();
+    const before = await ProviderTrace.findById(trace?._id).lean();
+
+    await request(app)
+      .get('/admin/fiscal/provider-traces')
+      .set('Authorization', bearer(token));
+    await request(app)
+      .get(`/admin/fiscal/provider-traces/${trace?._id}`)
+      .set('Authorization', bearer(token));
+
+    const after = await ProviderTrace.findById(trace?._id).lean();
+    expect(JSON.parse(JSON.stringify(after))).toEqual(JSON.parse(JSON.stringify(before)));
   });
 });

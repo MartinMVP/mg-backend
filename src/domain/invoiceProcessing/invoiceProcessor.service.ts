@@ -3,6 +3,7 @@ import { Audit } from '../audit/audit.model';
 import { FiscalProvider } from '../fiscalProviders/fiscalProvider.interface';
 import { getFiscalProviderConfig } from '../fiscalProviders/fiscalProvider.config';
 import { resolveFiscalProvider } from '../fiscalProviders/fiscalProvider.registry';
+import { traceProviderOperation } from '../fiscalProviders/providerTrace.service';
 import { InvoiceQueue } from '../invoiceQueue/invoiceQueue.model';
 import { InvoiceRecord } from '../invoiceRecords/invoiceRecord.model';
 
@@ -96,12 +97,27 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
       invoiceDraftId: queue.invoiceDraftId,
       invoiceQueueId: queue._id,
     };
-    const validation = await provider.validateInvoiceInput(providerInput);
+    const traceBase = {
+      transactionId: queue.transactionId,
+      invoiceRecordId: record._id,
+      invoiceQueueId: queue._id,
+      providerName: provider.name,
+      providerEnvironment: providerConfig.environment,
+      requestPayload: providerInput,
+      attempt: record.attempts,
+    };
+    const validation = await traceProviderOperation(
+      { ...traceBase, operation: 'validate' },
+      () => provider.validateInvoiceInput(providerInput)
+    );
     if (!validation.ok) {
       throw new Error(validation.message);
     }
 
-    const issueResult = await provider.issueInvoice(providerInput);
+    const issueResult = await traceProviderOperation(
+      { ...traceBase, operation: 'issue' },
+      () => provider.issueInvoice(providerInput)
+    );
     if (!issueResult.ok) {
       throw new Error(issueResult.providerMessage);
     }

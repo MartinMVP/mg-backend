@@ -9,6 +9,7 @@ import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.mode
 import { getFiscalProviderConfig, toSafeFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
 import { listFiscalProviders, resolveFiscalProvider } from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { mapCfdiToProviderInvoiceRequest } from '../../domain/fiscalProviders/providerInvoice.mapper';
+import { ProviderTrace, ProviderTraceOperation, ProviderTraceStatus } from '../../domain/fiscalProviders/providerTrace.model';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceRecord } from '../../domain/invoiceRecords/invoiceRecord.model';
 import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
@@ -34,6 +35,8 @@ const transactionStatuses: TransactionStatus[] = [
 ];
 const invoiceRecordStatuses = ['created', 'processing', 'completed', 'failed'];
 const invoiceQueueStatuses = ['queued', 'processing', 'completed', 'cancelled'];
+const providerTraceOperations: ProviderTraceOperation[] = ['validate', 'issue', 'cancel', 'status'];
+const providerTraceStatuses: ProviderTraceStatus[] = ['pending', 'success', 'failed'];
 const STUCK_PROCESSING_THRESHOLD_MS = 15 * 60_000;
 const invoiceAuditActions = [
   'INVOICE_QUEUE_CLAIMED',
@@ -120,6 +123,48 @@ router.get('/fiscal/providers/current', requireAuth, requireRole('admin', 'super
     provider: resolved.provider.name,
     config: toSafeFiscalProviderConfig(config),
   });
+});
+
+router.get('/fiscal/provider-traces', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const { page, limit } = parsePagination(req.query);
+  const operation = typeof req.query.operation === 'string' ? req.query.operation : '';
+  const status = typeof req.query.status === 'string' ? req.query.status : '';
+  const providerName = typeof req.query.providerName === 'string' ? req.query.providerName : '';
+  const filter: Record<string, unknown> = {};
+
+  if (providerName) filter.providerName = providerName;
+  if (operation && providerTraceOperations.includes(operation as ProviderTraceOperation)) {
+    filter.operation = operation;
+  }
+  if (status && providerTraceStatuses.includes(status as ProviderTraceStatus)) {
+    filter.status = status;
+  }
+
+  for (const key of ['invoiceRecordId', 'invoiceQueueId', 'transactionId']) {
+    if (!addObjectIdFilter(filter, key, req.query[key])) {
+      return res.status(400).json({ error: `Invalid ${key}` });
+    }
+  }
+
+  const items = await ProviderTrace.find(filter)
+    .sort({ startedAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .lean();
+
+  res.json({ page, limit, items });
+});
+
+router.get('/fiscal/provider-traces/:id', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid provider trace id' });
+  }
+
+  const trace = await ProviderTrace.findById(id).lean();
+  if (!trace) return res.status(404).json({ error: 'Not found' });
+
+  res.json(trace);
 });
 
 router.get('/fiscal/invoice-records/:id/cfdi-preview', requireAuth, requireRole('admin', 'super'), async (req, res) => {
