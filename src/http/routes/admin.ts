@@ -21,10 +21,17 @@ import {
 } from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { mapCfdiToProviderInvoiceRequest } from '../../domain/fiscalProviders/providerInvoice.mapper';
 import {
+  FiscalProviderCancelResult,
+  FiscalProviderIssueResult,
+} from '../../domain/fiscalProviders/fiscalProvider.interface';
+import {
   getProviderRuntimeOptions,
   listProviderCircuitBreakerStates,
+  normalizeProviderError,
+  runProviderOperation,
 } from '../../domain/fiscalProviders/providerRuntime.service';
 import { ProviderTrace, ProviderTraceOperation, ProviderTraceStatus } from '../../domain/fiscalProviders/providerTrace.model';
+import { traceProviderOperation } from '../../domain/fiscalProviders/providerTrace.service';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceRecord } from '../../domain/invoiceRecords/invoiceRecord.model';
 import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
@@ -140,12 +147,20 @@ router.get('/fiscal/providers', requireAuth, requireRole('admin', 'super'), (_re
 
 router.get('/fiscal/providers/current', requireAuth, requireRole('admin', 'super'), (_req, res) => {
   const config = getFiscalProviderConfig();
-  const resolved = resolveFiscalProvider(config);
+  try {
+    const resolved = resolveFiscalProvider(config);
 
-  res.json({
-    provider: resolved.provider.name,
-    config: toSafeFiscalProviderConfig(config),
-  });
+    res.json({
+      provider: resolved.provider.name,
+      config: toSafeFiscalProviderConfig(config),
+    });
+  } catch (_error) {
+    res.status(409).json({
+      error: 'Fiscal provider is not resolvable',
+      provider: config.provider,
+      config: toSafeFiscalProviderConfig(config),
+    });
+  }
 });
 
 router.get('/fiscal/providers/current/config', requireAuth, requireRole('admin', 'super'), (_req, res) => {
@@ -681,12 +696,52 @@ router.post('/fiscal/invoice-records/:id/issue', requireAuth, requireRole('admin
     return res.status(409).json({ error: 'Invoice record cannot be issued' });
   }
 
-  const resolvedProvider = resolveFiscalProvider();
-  const issueResult = await resolvedProvider.provider.issueInvoice({
-    transactionId: issuingRecord.transactionId,
-    invoiceDraftId: issuingRecord.invoiceDraftId,
-    invoiceQueueId: issuingRecord.invoiceQueueId,
-  });
+  let resolvedProvider;
+  let issueResult: FiscalProviderIssueResult;
+  const issueIdempotencyKey = `issue:${String(issuingRecord._id)}`;
+  try {
+    resolvedProvider = resolveFiscalProvider();
+    const providerInput = {
+      transactionId: issuingRecord.transactionId,
+      invoiceDraftId: issuingRecord.invoiceDraftId,
+      invoiceQueueId: issuingRecord.invoiceQueueId,
+      providerOperationId: issueIdempotencyKey,
+      idempotencyKey: issueIdempotencyKey,
+    };
+    issueResult = await traceProviderOperation(
+      {
+        transactionId: issuingRecord.transactionId,
+        invoiceRecordId: issuingRecord._id,
+        invoiceQueueId: issuingRecord.invoiceQueueId,
+        providerName: resolvedProvider.provider.name,
+        providerEnvironment: resolvedProvider.config.environment,
+        operation: 'issue',
+        requestPayload: providerInput,
+        maxPayloadBytes: resolvedProvider.config.maxPayloadBytes,
+      },
+      () => runProviderOperation({
+        providerName: resolvedProvider!.provider.name,
+        operationName: 'issueInvoice',
+        options: resolvedProvider!.config,
+        operation: () => resolvedProvider!.provider.issueInvoice(providerInput),
+      })
+    );
+  } catch (error: any) {
+    const message = normalizeProviderError(error);
+    await InvoiceRecord.findOneAndUpdate(
+      { _id: issuingRecord._id, lifecycleStatus: 'issuing' },
+      {
+        $set: {
+          lifecycleStatus: 'pending',
+          providerStatus: 'failed',
+          providerMessage: message,
+        },
+      },
+      { runValidators: true }
+    );
+    return res.status(409).json({ error: message });
+  }
+
   if (!issueResult.ok) {
     await InvoiceRecord.findOneAndUpdate(
       { _id: issuingRecord._id, lifecycleStatus: 'issuing' },
@@ -697,13 +752,13 @@ router.post('/fiscal/invoice-records/:id/issue', requireAuth, requireRole('admin
           providerEnvironment: resolvedProvider.config.environment,
           providerName: resolvedProvider.provider.name,
           providerStatus: issueResult.providerStatus,
-          providerMessage: issueResult.providerMessage,
+          providerMessage: normalizeProviderError(issueResult.providerMessage),
           providerRequestId: issueResult.providerRequestId,
         },
       },
       { runValidators: true }
     );
-    return res.status(409).json({ error: issueResult.providerMessage });
+    return res.status(409).json({ error: normalizeProviderError(issueResult.providerMessage) });
   }
 
   const invoiceRecord = await InvoiceRecord.findOneAndUpdate(
@@ -767,12 +822,52 @@ router.post('/fiscal/invoice-records/:id/cancel', requireAuth, requireRole('admi
     return res.status(409).json({ error: 'Invoice record cannot be cancelled' });
   }
 
-  const resolvedProvider = resolveFiscalProvider();
-  const cancelResult = await resolvedProvider.provider.cancelInvoice({
-    transactionId: cancellingRecord.transactionId,
-    invoiceDraftId: cancellingRecord.invoiceDraftId,
-    invoiceQueueId: cancellingRecord.invoiceQueueId,
-  });
+  let resolvedProvider;
+  let cancelResult: FiscalProviderCancelResult;
+  const cancelIdempotencyKey = `cancel:${String(cancellingRecord._id)}`;
+  try {
+    resolvedProvider = resolveFiscalProvider();
+    const providerInput = {
+      transactionId: cancellingRecord.transactionId,
+      invoiceDraftId: cancellingRecord.invoiceDraftId,
+      invoiceQueueId: cancellingRecord.invoiceQueueId,
+      providerOperationId: cancelIdempotencyKey,
+      idempotencyKey: cancelIdempotencyKey,
+    };
+    cancelResult = await traceProviderOperation(
+      {
+        transactionId: cancellingRecord.transactionId,
+        invoiceRecordId: cancellingRecord._id,
+        invoiceQueueId: cancellingRecord.invoiceQueueId,
+        providerName: resolvedProvider.provider.name,
+        providerEnvironment: resolvedProvider.config.environment,
+        operation: 'cancel',
+        requestPayload: providerInput,
+        maxPayloadBytes: resolvedProvider.config.maxPayloadBytes,
+      },
+      () => runProviderOperation({
+        providerName: resolvedProvider!.provider.name,
+        operationName: 'cancelInvoice',
+        options: resolvedProvider!.config,
+        operation: () => resolvedProvider!.provider.cancelInvoice(providerInput),
+      })
+    );
+  } catch (error: any) {
+    const message = normalizeProviderError(error);
+    await InvoiceRecord.findOneAndUpdate(
+      { _id: cancellingRecord._id, lifecycleStatus: 'cancelling' },
+      {
+        $set: {
+          lifecycleStatus: 'issued',
+          providerStatus: 'failed',
+          providerMessage: message,
+        },
+      },
+      { runValidators: true }
+    );
+    return res.status(409).json({ error: message });
+  }
+
   if (!cancelResult.ok) {
     await InvoiceRecord.findOneAndUpdate(
       { _id: cancellingRecord._id, lifecycleStatus: 'cancelling' },
@@ -783,13 +878,13 @@ router.post('/fiscal/invoice-records/:id/cancel', requireAuth, requireRole('admi
           providerEnvironment: resolvedProvider.config.environment,
           providerName: resolvedProvider.provider.name,
           providerStatus: cancelResult.providerStatus,
-          providerMessage: cancelResult.providerMessage,
+          providerMessage: normalizeProviderError(cancelResult.providerMessage),
           providerRequestId: cancelResult.providerRequestId,
         },
       },
       { runValidators: true }
     );
-    return res.status(409).json({ error: cancelResult.providerMessage });
+    return res.status(409).json({ error: normalizeProviderError(cancelResult.providerMessage) });
   }
 
   const invoiceRecord = await InvoiceRecord.findOneAndUpdate(

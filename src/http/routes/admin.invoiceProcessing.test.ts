@@ -39,6 +39,11 @@ import { MockPacAdapter } from '../../domain/fiscalProviders/mockPacAdapter';
 import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
 import { SandboxPacAdapter } from '../../domain/fiscalProviders/sandboxPacAdapter';
 import { ProviderTrace } from '../../domain/fiscalProviders/providerTrace.model';
+import {
+  sanitizeProviderPayloadForStorage,
+  sanitizeProviderText,
+  traceProviderOperation,
+} from '../../domain/fiscalProviders/providerTrace.service';
 import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceQueue } from '../../domain/invoiceQueue/invoiceQueue.model';
@@ -1017,7 +1022,7 @@ describe('admin fiscal invoice processing', () => {
     expect(record?.provider).toBe('mock');
     expect(record?.providerEnvironment).toBe('mock');
     expect(record?.providerReference).toBe(`mock-${String(queue._id)}`);
-    expect(record?.providerRequestId).toBe(`mock-req-${String(queue._id)}`);
+    expect(record?.providerRequestId).toMatch(/^mock-req-process:/);
     expect(record?.providerStatus).toBe('issued');
     expect(record?.providerMessage).toBe('Mock invoice issued');
     expect(record?.simulatedExternalId).toBe(`mock-${String(queue._id)}`);
@@ -1914,7 +1919,7 @@ describe('admin fiscal invoice processing', () => {
     expect(record?.provider).toBe('mock');
     expect(record?.providerEnvironment).toBe('mock');
     expect(record?.providerReference).toBe(`mock-${String(queue._id)}`);
-    expect(record?.providerRequestId).toBe(`mock-req-${String(queue._id)}`);
+    expect(record?.providerRequestId).toMatch(/^mock-req-process:/);
     expect(record?.providerName).toBe('mock');
     expect(record?.providerStatus).toBe('issued');
     expect(record?.providerMessage).toBe('Mock invoice issued');
@@ -1999,7 +2004,7 @@ describe('admin fiscal invoice processing', () => {
     expect(freshRecord?.provider).toBe('mock');
     expect(freshRecord?.providerEnvironment).toBe('mock');
     expect(freshRecord?.providerReference).toBe(`mock-${String(queue._id)}`);
-    expect(freshRecord?.providerRequestId).toBe(`mock-req-${String(queue._id)}`);
+    expect(freshRecord?.providerRequestId).toBe(`mock-req-issue:${String(record._id)}`);
     expect(freshRecord?.providerStatus).toBe('issued');
     expect(freshRecord?.providerMessage).toBe('Mock invoice issued');
     expect(freshRecord?.simulatedExternalId).toBe(`mock-${String(queue._id)}`);
@@ -2084,7 +2089,7 @@ describe('admin fiscal invoice processing', () => {
     expect(freshRecord?.provider).toBe('mock');
     expect(freshRecord?.providerEnvironment).toBe('mock');
     expect(freshRecord?.providerReference).toBe(`mock-${String(queue._id)}`);
-    expect(freshRecord?.providerRequestId).toBe(`mock-cancel-${String(queue._id)}`);
+    expect(freshRecord?.providerRequestId).toBe(`mock-cancel-cancel:${String(record._id)}`);
     expect(freshRecord?.providerStatus).toBe('cancelled');
     expect(freshRecord?.providerMessage).toBe('Mock cancellation successful');
     expect(audit).toBeTruthy();
@@ -2545,5 +2550,220 @@ describe('admin fiscal invoice processing', () => {
       expect(sandbox?.enabled).toBe(false);
       expect(defaultProviderResilienceConfig.circuitBreakerEnabled).toBe(false);
     });
+  });
+
+  it('returns a controlled response when current provider is not resolvable', async () => {
+    const token = await authToken('admin');
+
+    await withEnv({
+      FISCAL_PROVIDER: 'sandbox-pac',
+      FISCAL_PROVIDER_ENABLED: 'true',
+      FISCAL_PROVIDER_SANDBOX_ENABLED: 'true',
+      FISCAL_PROVIDER_ENVIRONMENT: 'sandbox',
+    }, async () => {
+      const res = await request(app)
+        .get('/admin/fiscal/providers/current')
+        .set('Authorization', bearer(token));
+
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        error: 'Fiscal provider is not resolvable',
+        provider: 'sandbox-pac',
+      });
+      expect(JSON.stringify(res.body)).not.toMatch(/stack|password|token|apiKey|secret/i);
+    });
+  });
+
+  it('issue lifecycle uses runtime retry and creates ProviderTrace with stable idempotency key', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+    });
+    const issueSpy = vi.spyOn(MockFiscalProvider.prototype, 'issueInvoice')
+      .mockRejectedValueOnce(new ProviderRuntimeError('provider_timeout', 'token=secret', true))
+      .mockResolvedValueOnce({
+        ok: true,
+        providerStatus: 'issued',
+        providerMessage: 'Mock invoice issued',
+        providerReference: `mock-${String(queue._id)}`,
+        providerRequestId: `mock-req-issue:${String(record._id)}`,
+        simulatedExternalId: `mock-${String(queue._id)}`,
+      });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/issue`)
+      .set('Authorization', bearer(token));
+    const trace = await ProviderTrace.findOne({ invoiceRecordId: record._id, operation: 'issue' }).lean();
+
+    expect(res.status).toBe(200);
+    expect(issueSpy).toHaveBeenCalledTimes(2);
+    expect(trace?.status).toBe('success');
+    expect((trace?.requestPayload as any).idempotencyKey).toBe(`issue:${String(record._id)}`);
+    expect((trace?.requestPayload as any).providerOperationId).toBe(`issue:${String(record._id)}`);
+    expect(String((trace?.requestPayload as any).idempotencyKey)).not.toMatch(/^[0-9a-f]{8}-/i);
+  });
+
+  it('cancel lifecycle uses runtime retry and creates ProviderTrace with stable idempotency key', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      lifecycleStatus: 'issued',
+      issuedAt: new Date(),
+    });
+    const cancelSpy = vi.spyOn(MockFiscalProvider.prototype, 'cancelInvoice')
+      .mockRejectedValueOnce(new ProviderRuntimeError('provider_timeout', 'authorization bearer secret', true))
+      .mockResolvedValueOnce({
+        ok: true,
+        providerStatus: 'cancelled',
+        providerMessage: 'Mock cancellation successful',
+        providerReference: `mock-${String(queue._id)}`,
+        providerRequestId: `mock-cancel-cancel:${String(record._id)}`,
+      });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/cancel`)
+      .set('Authorization', bearer(token));
+    const trace = await ProviderTrace.findOne({ invoiceRecordId: record._id, operation: 'cancel' }).lean();
+
+    expect(res.status).toBe(200);
+    expect(cancelSpy).toHaveBeenCalledTimes(2);
+    expect(trace?.status).toBe('success');
+    expect((trace?.requestPayload as any).idempotencyKey).toBe(`cancel:${String(record._id)}`);
+    expect(String((trace?.requestPayload as any).idempotencyKey)).not.toMatch(/^[0-9a-f]{8}-/i);
+  });
+
+  it('rolls issue lifecycle back safely when provider fails through runtime trace', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+    });
+    vi.spyOn(MockFiscalProvider.prototype, 'issueInvoice').mockResolvedValueOnce({
+      ok: false,
+      providerStatus: 'failed',
+      providerMessage: 'token=abc password=secret stack trace',
+      providerRequestId: `mock-req-issue:${String(record._id)}`,
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/issue`)
+      .set('Authorization', bearer(token));
+    const freshRecord = await InvoiceRecord.findById(record._id).lean();
+    const trace = await ProviderTrace.findOne({ invoiceRecordId: record._id, operation: 'issue' }).lean();
+
+    expect(res.status).toBe(409);
+    expect(freshRecord?.lifecycleStatus).toBe('pending');
+    expect(freshRecord?.providerMessage).not.toMatch(/abc|secret/i);
+    expect(trace?.status).toBe('failed');
+    expect(trace?.errorMessage).not.toMatch(/abc|secret/i);
+  });
+
+  it('rolls cancel lifecycle back safely when provider fails through runtime trace', async () => {
+    const token = await authToken('admin');
+    const { transaction, queue, draft } = await createQueuedInvoice('completed');
+    const record = await InvoiceRecord.create({
+      transactionId: transaction._id,
+      invoiceDraftId: draft._id,
+      invoiceQueueId: queue._id,
+      status: 'completed',
+      attempts: 1,
+      lifecycleStatus: 'issued',
+      issuedAt: new Date(),
+    });
+    vi.spyOn(MockFiscalProvider.prototype, 'cancelInvoice').mockResolvedValueOnce({
+      ok: false,
+      providerStatus: 'failed',
+      providerMessage: 'apiKey=abc123 xml=<xml>',
+      providerRequestId: `mock-cancel-cancel:${String(record._id)}`,
+    });
+
+    const res = await request(app)
+      .post(`/admin/fiscal/invoice-records/${record._id}/cancel`)
+      .set('Authorization', bearer(token));
+    const freshRecord = await InvoiceRecord.findById(record._id).lean();
+    const trace = await ProviderTrace.findOne({ invoiceRecordId: record._id, operation: 'cancel' }).lean();
+
+    expect(res.status).toBe(409);
+    expect(freshRecord?.lifecycleStatus).toBe('issued');
+    expect(freshRecord?.providerMessage).not.toMatch(/abc123|xml/i);
+    expect(trace?.status).toBe('failed');
+    expect(trace?.errorMessage).not.toMatch(/abc123|xml/i);
+  });
+
+  it('deep-sanitizes provider trace strings and truncates long error messages', () => {
+    const sensitive = 'token=abc password=secret apiKey=key authorization bearer xml=<xml> pdf=file uuid=real sello=x certificado=y cadena=z timbre=t';
+    const sanitizedPayload = sanitizeProviderPayloadForStorage({
+      safe: 'ok',
+      nested: { message: `${sensitive} ${'x'.repeat(400)}` },
+      token: 'must disappear',
+    }, 10_000);
+    const sanitizedMessage = sanitizeProviderText(`${sensitive} ${'x'.repeat(400)}`);
+    const serialized = JSON.stringify(sanitizedPayload.payload);
+
+    expect(serialized).not.toContain('must disappear');
+    expect(serialized).not.toMatch(/abc|secret|apiKey=key|xml|pdf|uuid|sello|certificado|cadena|timbre/i);
+    expect(sanitizedMessage).not.toMatch(/abc|secret|apiKey=key|xml|pdf|uuid|sello|certificado|cadena|timbre/i);
+    expect(sanitizedMessage.length).toBeLessThanOrEqual(303);
+  });
+
+  it('truncates oversized provider trace request and response payloads', async () => {
+    await traceProviderOperation(
+      {
+        providerName: 'mock',
+        providerEnvironment: 'mock',
+        operation: 'status',
+        requestPayload: { large: Array.from({ length: 20 }, () => 'x'.repeat(300)) },
+        maxPayloadBytes: 1_200,
+      },
+      async () => ({ ok: true, items: Array.from({ length: 20 }, () => 'x'.repeat(300)) })
+    );
+    const directTrace = await ProviderTrace.findOne({ operation: 'status' }).sort({ startedAt: -1 }).lean();
+
+    expect(directTrace?.requestPayloadTruncated).toBe(true);
+    expect(directTrace?.responsePayloadTruncated).toBe(true);
+    expect((directTrace?.requestPayload as any).payloadTruncated).toBe(true);
+    expect((directTrace?.responsePayload as any).payloadTruncated).toBe(true);
+
+    const { queue } = await createQueuedInvoice();
+    const provider = new MockFiscalProvider();
+    vi.spyOn(provider, 'validateInvoiceInput').mockResolvedValue({
+      ok: true,
+      message: 'x'.repeat(2_000),
+    });
+    vi.spyOn(provider, 'issueInvoice').mockResolvedValue({
+      ok: true,
+      providerStatus: 'issued',
+      providerMessage: 'x'.repeat(2_000),
+      providerReference: `mock-${String(queue._id)}`,
+      providerRequestId: `mock-req-${String(queue._id)}`,
+      simulatedExternalId: `mock-${String(queue._id)}`,
+      items: Array.from({ length: 20 }, () => 'x'.repeat(300)),
+    } as any);
+
+    await withEnv({
+      FISCAL_PROVIDER_MAX_PAYLOAD_BYTES: '1200',
+    }, async () => {
+      const result = await processInvoiceQueue({ invoiceQueueId: queue._id, provider });
+      expect(result.ok).toBe(true);
+    });
+    const issueTrace = await ProviderTrace.findOne({ invoiceQueueId: queue._id, operation: 'issue' }).lean();
+
+    expect(issueTrace?.responsePayloadTruncated).toBe(true);
+    expect((issueTrace?.responsePayload as any).payloadTruncated).toBe(true);
+    expect(JSON.stringify(issueTrace?.responsePayload).length).toBeLessThan(1200);
   });
 });

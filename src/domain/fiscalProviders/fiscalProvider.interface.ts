@@ -8,6 +8,8 @@ export type FiscalProviderInput = {
   transactionId: Types.ObjectId;
   invoiceDraftId: Types.ObjectId;
   invoiceQueueId: Types.ObjectId;
+  providerOperationId?: string;
+  idempotencyKey?: string;
   cfdiRequest?: CfdiRequest;
   providerInvoiceRequest?: ProviderInvoiceRequest;
 };

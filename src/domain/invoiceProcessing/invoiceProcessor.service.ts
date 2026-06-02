@@ -97,6 +97,8 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
       transactionId: queue.transactionId,
       invoiceDraftId: queue.invoiceDraftId,
       invoiceQueueId: queue._id,
+      providerOperationId: `process:${String(record._id)}`,
+      idempotencyKey: `process:${String(record._id)}`,
     };
     const traceBase = {
       transactionId: queue.transactionId,
@@ -106,6 +108,7 @@ export async function processInvoiceQueue(options: ProcessInvoiceQueueOptions = 
       providerEnvironment: providerConfig.environment,
       requestPayload: providerInput,
       attempt: record.attempts,
+      maxPayloadBytes: providerConfig.maxPayloadBytes,
     };
     const validation = await traceProviderOperation(
       { ...traceBase, operation: 'validate' },

@@ -43,6 +43,8 @@ export class MockFiscalProvider implements FiscalProvider {
       transactionId: String(input.transactionId),
       invoiceDraftId: String(input.invoiceDraftId),
       invoiceQueueId: String(input.invoiceQueueId),
+      providerOperationId: input.providerOperationId,
+      idempotencyKey: input.idempotencyKey,
     });
     return {
       ok: result.ok,
@@ -60,6 +62,8 @@ export class MockFiscalProvider implements FiscalProvider {
       invoiceDraftId: String(input.invoiceDraftId),
       invoiceQueueId: String(input.invoiceQueueId),
       providerReference: `mock-${String(input.invoiceQueueId)}`,
+      providerOperationId: input.providerOperationId,
+      idempotencyKey: input.idempotencyKey,
     });
     return {
       ok: result.ok,

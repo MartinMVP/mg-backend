@@ -17,6 +17,8 @@ export type PacIssueRequest = {
   transactionId: string;
   invoiceQueueId: string;
   invoiceDraftId: string;
+  providerOperationId?: string;
+  idempotencyKey?: string;
 };
 
 export type PacIssueResponse = {
@@ -34,6 +36,8 @@ export type PacCancelRequest = {
   transactionId: string;
   invoiceQueueId: string;
   invoiceDraftId: string;
+  providerOperationId?: string;
+  idempotencyKey?: string;
 };
 
 export type PacCancelResponse = {

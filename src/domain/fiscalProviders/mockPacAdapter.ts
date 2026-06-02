@@ -21,13 +21,16 @@ export class MockPacAdapter implements PacAdapter {
 
   async issue(request: PacIssueRequest): Promise<PacIssueResponse> {
     const simulatedExternalId = `mock-${request.invoiceQueueId}`;
+    const providerRequestId = request.idempotencyKey
+      ? `mock-req-${request.idempotencyKey}`
+      : `mock-req-${request.invoiceQueueId}`;
 
     if (this.options.issueShouldFail) {
       return {
         ok: false,
         providerStatus: 'failed',
         message: 'Mock invoice issue failed',
-        providerRequestId: `mock-req-${request.invoiceQueueId}`,
+        providerRequestId,
         error: mapPacError('PAC_VALIDATION_ERROR', 'Mock invoice issue failed'),
       };
     }
@@ -37,18 +40,22 @@ export class MockPacAdapter implements PacAdapter {
       providerStatus: 'issued',
       message: 'Mock invoice issued',
       providerReference: simulatedExternalId,
-      providerRequestId: `mock-req-${request.invoiceQueueId}`,
+      providerRequestId,
       simulatedExternalId,
     };
   }
 
   async cancel(request: PacCancelRequest): Promise<PacCancelResponse> {
+    const providerRequestId = request.idempotencyKey
+      ? `mock-cancel-${request.idempotencyKey}`
+      : `mock-cancel-${request.invoiceQueueId}`;
+
     if (this.options.cancelShouldFail) {
       return {
         ok: false,
         providerStatus: 'failed',
         message: 'Mock cancellation failed',
-        providerRequestId: `mock-cancel-${request.invoiceQueueId}`,
+        providerRequestId,
         error: mapPacError('PAC_VALIDATION_ERROR', 'Mock cancellation failed'),
       };
     }
@@ -58,7 +65,7 @@ export class MockPacAdapter implements PacAdapter {
       providerStatus: 'cancelled',
       message: 'Mock cancellation successful',
       providerReference: request.providerReference || `mock-${request.invoiceQueueId}`,
-      providerRequestId: `mock-cancel-${request.invoiceQueueId}`,
+      providerRequestId,
     };
   }
 

@@ -14,6 +14,8 @@ export interface IProviderTrace {
   requestPayload?: unknown;
   responsePayload?: unknown;
   errorMessage?: string;
+  requestPayloadTruncated?: boolean;
+  responsePayloadTruncated?: boolean;
   durationMs?: number;
   attempt?: number;
   startedAt: Date;
@@ -42,6 +44,8 @@ const ProviderTraceSchema = new Schema<IProviderTrace>(
     requestPayload: { type: Schema.Types.Mixed },
     responsePayload: { type: Schema.Types.Mixed },
     errorMessage: { type: String, trim: true },
+    requestPayloadTruncated: { type: Boolean, default: false },
+    responsePayloadTruncated: { type: Boolean, default: false },
     durationMs: { type: Number, min: 0 },
     attempt: { type: Number, min: 0 },
     startedAt: { type: Date, required: true, default: Date.now, index: true },

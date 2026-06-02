@@ -36,6 +36,8 @@ export type ProviderInvoiceMetadata = {
   source: 'internal_cfdi_request';
   transactionId: Types.ObjectId;
   invoiceRecordId: Types.ObjectId;
+  providerOperationId?: string;
+  idempotencyKey?: string;
 };
 
 export type ProviderInvoiceRequest = {
