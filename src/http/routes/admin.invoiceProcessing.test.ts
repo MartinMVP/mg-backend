@@ -18,6 +18,15 @@ import {
   defaultProviderResilienceConfig,
   validateProviderResilienceConfig,
 } from '../../domain/fiscalProviders/providerResilience.types';
+import {
+  getProviderCircuitBreakerState,
+  normalizeProviderError,
+  ProviderRuntimeError,
+  resetProviderRuntimeState,
+  runProviderOperation,
+  runWithRetry,
+  runWithTimeout,
+} from '../../domain/fiscalProviders/providerRuntime.service';
 import { PacAdapter } from '../../domain/fiscalProviders/pacAdapter.interface';
 import { mapPacError } from '../../domain/fiscalProviders/pacError.mapper';
 import {
@@ -47,6 +56,7 @@ describe('admin fiscal invoice processing', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    resetProviderRuntimeState();
   });
 
   async function authToken(role: 'user' | 'admin' | 'super' = 'admin') {
@@ -2328,5 +2338,212 @@ describe('admin fiscal invoice processing', () => {
 
     const after = await ProviderTrace.findById(trace?._id).lean();
     expect(JSON.parse(JSON.stringify(after))).toEqual(JSON.parse(JSON.stringify(before)));
+  });
+
+  it('returns a controlled retryable timeout error', async () => {
+    await expect(
+      runWithTimeout(
+        () => new Promise((resolve) => setTimeout(() => resolve('too late'), 30)),
+        5
+      )
+    ).rejects.toMatchObject({
+      code: 'provider_timeout',
+      retryable: true,
+    });
+  });
+
+  it('retries retryable provider errors only', async () => {
+    const retryable = vi
+      .fn()
+      .mockRejectedValueOnce(new ProviderRuntimeError('provider_timeout', 'timeout', true))
+      .mockResolvedValueOnce('ok');
+    const nonRetryable = vi
+      .fn()
+      .mockRejectedValue(new ProviderRuntimeError('provider_validation_failed', 'invalid', false));
+
+    const result = await runWithRetry(retryable, { maxRetries: 2, retryBackoffMs: 0 });
+    await expect(runWithRetry(nonRetryable, { maxRetries: 2, retryBackoffMs: 0 })).rejects.toMatchObject({
+      code: 'provider_validation_failed',
+    });
+
+    expect(result).toEqual({ result: 'ok', attempts: 2 });
+    expect(retryable).toHaveBeenCalledTimes(2);
+    expect(nonRetryable).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens circuit breaker after threshold and blocks execution while open', async () => {
+    const options = {
+      circuitBreakerEnabled: true,
+      failureThreshold: 2,
+      resetTimeoutMs: 1_000,
+      maxRetries: 0,
+      retryBackoffMs: 0,
+      timeoutMs: 100,
+    };
+    const failing = vi.fn().mockRejectedValue(new ProviderRuntimeError('provider_timeout', 'timeout', true));
+    const blocked = vi.fn().mockResolvedValue('blocked');
+
+    await expect(runProviderOperation({
+      providerName: 'mock',
+      operationName: 'issueInvoice',
+      options,
+      operation: failing,
+    })).rejects.toMatchObject({ code: 'provider_timeout' });
+    await expect(runProviderOperation({
+      providerName: 'mock',
+      operationName: 'issueInvoice',
+      options,
+      operation: failing,
+    })).rejects.toMatchObject({ code: 'provider_timeout' });
+    await expect(runProviderOperation({
+      providerName: 'mock',
+      operationName: 'issueInvoice',
+      options,
+      operation: blocked,
+    })).rejects.toMatchObject({ code: 'provider_circuit_open' });
+
+    expect(failing).toHaveBeenCalledTimes(2);
+    expect(blocked).not.toHaveBeenCalled();
+    expect(getProviderCircuitBreakerState('mock', 'issueInvoice').state).toBe('open');
+  });
+
+  it('moves circuit breaker half_open to closed after a successful probe', async () => {
+    const options = {
+      circuitBreakerEnabled: true,
+      failureThreshold: 1,
+      resetTimeoutMs: 1,
+      maxRetries: 0,
+      retryBackoffMs: 0,
+      timeoutMs: 100,
+    };
+
+    await expect(runProviderOperation({
+      providerName: 'mock',
+      operationName: 'validateInvoiceInput',
+      options,
+      operation: () => Promise.reject(new ProviderRuntimeError('provider_timeout', 'timeout', true)),
+    })).rejects.toMatchObject({ code: 'provider_timeout' });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+
+    const result = await runProviderOperation({
+      providerName: 'mock',
+      operationName: 'validateInvoiceInput',
+      options,
+      operation: () => Promise.resolve('ok'),
+    });
+
+    expect(result).toBe('ok');
+    expect(getProviderCircuitBreakerState('mock', 'validateInvoiceInput').state).toBe('closed');
+  });
+
+  it('moves circuit breaker half_open back to open after a failed probe', async () => {
+    const options = {
+      circuitBreakerEnabled: true,
+      failureThreshold: 1,
+      resetTimeoutMs: 1,
+      maxRetries: 0,
+      retryBackoffMs: 0,
+      timeoutMs: 100,
+    };
+
+    await expect(runProviderOperation({
+      providerName: 'mock',
+      operationName: 'status',
+      options,
+      operation: () => Promise.reject(new ProviderRuntimeError('provider_timeout', 'timeout', true)),
+    })).rejects.toMatchObject({ code: 'provider_timeout' });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await expect(runProviderOperation({
+      providerName: 'mock',
+      operationName: 'status',
+      options,
+      operation: () => Promise.reject(new ProviderRuntimeError('provider_timeout', 'timeout', true)),
+    })).rejects.toMatchObject({ code: 'provider_timeout' });
+
+    expect(getProviderCircuitBreakerState('mock', 'status').state).toBe('open');
+  });
+
+  it('sanitizes provider runtime errors and truncates long messages', () => {
+    const longSecretMessage = `token=abc123 password=secret apiKey=key xml=<xml> pdf=file uuid=real ${'x'.repeat(400)}`;
+    const sanitized = normalizeProviderError(new Error(longSecretMessage));
+
+    expect(sanitized).not.toContain('abc123');
+    expect(sanitized).not.toContain('secret');
+    expect(sanitized).not.toContain('key');
+    expect(sanitized).not.toMatch(/xml|pdf|uuid/i);
+    expect(sanitized.length).toBeLessThanOrEqual(303);
+  });
+
+  it('keeps InvoiceProcessor compatible with runtime retry without duplicating record attempts', async () => {
+    const { queue } = await createQueuedInvoice();
+    const provider = new MockFiscalProvider();
+    const issueSpy = vi.spyOn(provider, 'issueInvoice')
+      .mockRejectedValueOnce(new ProviderRuntimeError('provider_timeout', 'timeout', true))
+      .mockResolvedValueOnce({
+        ok: true,
+        providerStatus: 'issued',
+        providerMessage: 'Mock invoice issued',
+        providerReference: 'mock-reference',
+        providerRequestId: 'mock-request',
+        simulatedExternalId: 'mock-external',
+      });
+
+    const result = await processInvoiceQueue({ invoiceQueueId: queue._id, provider });
+    const record = await InvoiceRecord.findOne({ invoiceQueueId: queue._id }).lean();
+    const traces = await ProviderTrace.find({ invoiceQueueId: queue._id }).lean();
+
+    expect(result.ok).toBe(true);
+    expect(issueSpy).toHaveBeenCalledTimes(2);
+    expect(record?.attempts).toBe(1);
+    expect(traces.map((trace) => trace.operation)).toEqual(expect.arrayContaining(['validate', 'issue']));
+    expect(traces.every((trace) => trace.status === 'success')).toBe(true);
+  });
+
+  it('keeps runtime admin endpoints protected and read-only', async () => {
+    const adminToken = await authToken('admin');
+    const userToken = await authToken('user');
+    const tracesBefore = await ProviderTrace.countDocuments();
+
+    const noAuth = await request(app).get('/admin/fiscal/providers/current/runtime');
+    const user = await request(app)
+      .get('/admin/fiscal/providers/current/circuit-breaker')
+      .set('Authorization', bearer(userToken));
+    const runtime = await request(app)
+      .get('/admin/fiscal/providers/current/runtime')
+      .set('Authorization', bearer(adminToken));
+    const circuitBreaker = await request(app)
+      .get('/admin/fiscal/providers/current/circuit-breaker')
+      .set('Authorization', bearer(adminToken));
+
+    expect(noAuth.status).toBe(401);
+    expect(user.status).toBe(403);
+    expect(runtime.status).toBe(200);
+    expect(runtime.body.provider).toBe('mock');
+    expect(runtime.body.runtime).toMatchObject({
+      timeoutMs: expect.any(Number),
+      maxRetries: expect.any(Number),
+      retryBackoffMs: expect.any(Number),
+      circuitBreakerEnabled: expect.any(Boolean),
+      failureThreshold: expect.any(Number),
+      resetTimeoutMs: expect.any(Number),
+      maxPayloadBytes: expect.any(Number),
+    });
+    expect(circuitBreaker.status).toBe(200);
+    expect(circuitBreaker.body.circuitBreakers).toEqual(expect.any(Array));
+    expect(await ProviderTrace.countDocuments()).toBe(tracesBefore);
+  });
+
+  it('keeps sandbox-pac disabled while runtime config is available for mock defaults', async () => {
+    await withEnv({
+      FISCAL_PROVIDER: undefined,
+      FISCAL_PROVIDER_SANDBOX_ENABLED: undefined,
+    }, async () => {
+      const config = getFiscalProviderConfig();
+      const sandbox = listFiscalProviders().find((provider) => provider.name === 'sandbox-pac');
+
+      expect(config.provider).toBe('mock');
+      expect(sandbox?.enabled).toBe(false);
+      expect(defaultProviderResilienceConfig.circuitBreakerEnabled).toBe(false);
+    });
   });
 });

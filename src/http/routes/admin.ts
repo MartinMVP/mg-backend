@@ -20,6 +20,10 @@ import {
   resolveFiscalProvider,
 } from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { mapCfdiToProviderInvoiceRequest } from '../../domain/fiscalProviders/providerInvoice.mapper';
+import {
+  getProviderRuntimeOptions,
+  listProviderCircuitBreakerStates,
+} from '../../domain/fiscalProviders/providerRuntime.service';
 import { ProviderTrace, ProviderTraceOperation, ProviderTraceStatus } from '../../domain/fiscalProviders/providerTrace.model';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
 import { InvoiceRecord } from '../../domain/invoiceRecords/invoiceRecord.model';
@@ -186,6 +190,26 @@ router.get('/fiscal/providers/current/config-validation', requireAuth, requireRo
   res.json({
     config: toSafeFiscalProviderConfig(config),
     validation: validateFiscalProviderConfig(config),
+  });
+});
+
+router.get('/fiscal/providers/current/runtime', requireAuth, requireRole('admin', 'super'), (_req, res) => {
+  const config = getFiscalProviderConfig();
+
+  res.json({
+    provider: config.provider,
+    environment: config.environment,
+    runtime: getProviderRuntimeOptions(config),
+  });
+});
+
+router.get('/fiscal/providers/current/circuit-breaker', requireAuth, requireRole('admin', 'super'), (_req, res) => {
+  const config = getFiscalProviderConfig();
+
+  res.json({
+    provider: config.provider,
+    environment: config.environment,
+    circuitBreakers: listProviderCircuitBreakerStates(),
   });
 });
 

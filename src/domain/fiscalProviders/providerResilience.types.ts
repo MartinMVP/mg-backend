@@ -5,6 +5,7 @@ export type ProviderResilienceConfig = {
   circuitBreakerEnabled: boolean;
   failureThreshold: number;
   resetTimeoutMs: number;
+  maxPayloadBytes: number;
   maxProviderPayloadBytes: number;
 };
 
@@ -15,6 +16,7 @@ export const defaultProviderResilienceConfig: ProviderResilienceConfig = {
   circuitBreakerEnabled: false,
   failureThreshold: 5,
   resetTimeoutMs: 60_000,
+  maxPayloadBytes: 256_000,
   maxProviderPayloadBytes: 256_000,
 };
 
@@ -39,6 +41,14 @@ export function validateProviderResilienceConfig(config: ProviderResilienceConfi
 
   if (!Number.isFinite(config.resetTimeoutMs) || config.resetTimeoutMs < 1_000 || config.resetTimeoutMs > 600_000) {
     issues.push('sandbox_reset_timeout_invalid');
+  }
+
+  if (
+    !Number.isInteger(config.maxPayloadBytes)
+    || config.maxPayloadBytes < 1_024
+    || config.maxPayloadBytes > 1_048_576
+  ) {
+    issues.push('sandbox_payload_limit_invalid');
   }
 
   if (

@@ -47,6 +47,12 @@ export function resolveProviderConfiguration(
   const resilience = {
     ...defaultProviderResilienceConfig,
     timeoutMs: config.timeoutMs,
+    maxRetries: config.maxRetries,
+    retryBackoffMs: config.retryBackoffMs,
+    circuitBreakerEnabled: config.circuitBreakerEnabled,
+    failureThreshold: config.failureThreshold,
+    resetTimeoutMs: config.resetTimeoutMs,
+    maxPayloadBytes: config.maxPayloadBytes,
     maxProviderPayloadBytes: config.maxProviderPayloadBytes,
   };
 
