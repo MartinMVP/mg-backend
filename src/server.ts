@@ -9,7 +9,7 @@ import { startAuctionScheduler } from './jobs/auctionScheduler';
 const PORT = Number(env.port) || Number(process.env.PORT) || 8080;
 const HOST = (process.env.HOST || '0.0.0.0') as string;
 
-app.get('/', (_req, res) => { res.send('Mercado Ganadero API activa 🐄'); });
+app.get('/', (_req, res) => { res.send('Enlace Ganadero API activa 🐄'); });
 
 process.on('uncaughtException', (err) => console.error('❌ UncaughtException:', err));
 process.on('unhandledRejection', (r) => console.error('❌ UnhandledRejection:', r));

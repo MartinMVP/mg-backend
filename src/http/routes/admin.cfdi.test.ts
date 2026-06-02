@@ -37,7 +37,7 @@ function validCfdiRequest(overrides: Partial<CfdiRequest> = {}): CfdiRequest {
     },
     concepts: [
       {
-        description: 'Operacion Mercado Ganadero',
+        description: 'Operacion Enlace Ganadero',
         productServiceKey: '10101500',
         quantity: 1,
         unitKey: 'E48',

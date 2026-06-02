@@ -56,7 +56,7 @@ export function buildCfdiRequest(input: BuildCfdiRequestInput): CfdiRequest {
     },
     concepts: [
       {
-        description: 'Operacion Mercado Ganadero',
+        description: 'Operacion Enlace Ganadero',
         productServiceKey: INTERNAL_CFDI_DEFAULT_PRODUCT_SERVICE_KEY,
         quantity: 1,
         unitKey: INTERNAL_CFDI_DEFAULT_UNIT_KEY,
