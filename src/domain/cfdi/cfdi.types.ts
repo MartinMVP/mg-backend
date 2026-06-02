@@ -17,7 +17,9 @@ export type CfdiReceiver = {
 
 export type CfdiConcept = {
   description: string;
+  productServiceKey: string;
   quantity: number;
+  unitKey: string;
   unitPrice: number;
   amount: number;
   taxObject: string;

@@ -35,7 +35,9 @@ function validCfdiRequest(overrides: Partial<CfdiRequest> = {}): CfdiRequest {
     concepts: [
       {
         description: 'Operacion Mercado Ganadero',
+        productServiceKey: '10101500',
         quantity: 1,
+        unitKey: 'E48',
         unitPrice: 9000,
         amount: 9000,
         taxObject: '02',
@@ -190,6 +192,140 @@ describe('CFDI domain preparation', () => {
     expect(result.issues).toContain('total_invalid');
   });
 
+  it('rejects invalid issuer regimen', () => {
+    const request = validCfdiRequest({
+      issuer: { ...validCfdiRequest().issuer, regimenFiscal: '999' },
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('invalid_issuer_regimen');
+  });
+
+  it('rejects invalid receiver regimen', () => {
+    const request = validCfdiRequest({
+      receiver: { ...validCfdiRequest().receiver, regimenFiscal: '999' },
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('invalid_receiver_regimen');
+  });
+
+  it('rejects invalid usoCFDI', () => {
+    const request = validCfdiRequest({
+      receiver: { ...validCfdiRequest().receiver, usoCFDI: 'BAD' },
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('invalid_uso_cfdi');
+  });
+
+  it('rejects invalid currency', () => {
+    const request = validCfdiRequest({
+      currency: 'USD' as any,
+      totals: { subtotal: 9000, taxes: 0, total: 9000, currency: 'USD' as any },
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('invalid_currency');
+  });
+
+  it('rejects invalid taxObject', () => {
+    const request = validCfdiRequest({
+      concepts: [{ ...validCfdiRequest().concepts[0], taxObject: '99' }],
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('invalid_tax_object');
+  });
+
+  it('rejects missing productServiceKey', () => {
+    const request = validCfdiRequest({
+      concepts: [{ ...validCfdiRequest().concepts[0], productServiceKey: '' }],
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('missing_product_service_key');
+  });
+
+  it('rejects missing unitKey', () => {
+    const request = validCfdiRequest({
+      concepts: [{ ...validCfdiRequest().concepts[0], unitKey: '' }],
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('missing_unit_key');
+  });
+
+  it('rejects invalid concept amount', () => {
+    const request = validCfdiRequest({
+      concepts: [{ ...validCfdiRequest().concepts[0], amount: 8000 }],
+      totals: { subtotal: 8000, taxes: 0, total: 8000, currency: 'MXN' },
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('invalid_concept_amount');
+  });
+
+  it('rejects invalid subtotal', () => {
+    const request = validCfdiRequest({
+      totals: { subtotal: 8000, taxes: 0, total: 9000, currency: 'MXN' },
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('invalid_subtotal');
+  });
+
+  it('rejects total lower than subtotal', () => {
+    const request = validCfdiRequest({
+      totals: { subtotal: 9000, taxes: 0, total: 8000, currency: 'MXN' },
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('invalid_total');
+  });
+
+  it('rejects negative taxes', () => {
+    const request = validCfdiRequest({
+      totals: { subtotal: 9000, taxes: -1, total: 9000, currency: 'MXN' },
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('invalid_taxes');
+  });
+
+  it('rejects same issuer and receiver RFC', () => {
+    const request = validCfdiRequest({
+      receiver: { ...validCfdiRequest().receiver, rfc: validCfdiRequest().issuer.rfc },
+    });
+
+    const result = validateCfdiRequest(request);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('same_issuer_receiver_rfc');
+  });
+
   it('builds the CFDI request from FiscalSnapshot, not live FiscalProfile', async () => {
     const { seller, buyer, transaction, snapshot, draft, record } = await createInvoiceRecordFixture();
     await FiscalProfile.create({
@@ -222,6 +358,8 @@ describe('CFDI domain preparation', () => {
     expect(cfdiRequest.receiver.name).toBe('Comprador Snapshot');
     expect(cfdiRequest.issuer.postalCode).toBe('83000');
     expect(cfdiRequest.receiver.usoCFDI).toBe('G03');
+    expect(cfdiRequest.concepts[0].productServiceKey).toBe('10101500');
+    expect(cfdiRequest.concepts[0].unitKey).toBe('E48');
   });
 
   it('returns 401 without auth on CFDI preview', async () => {

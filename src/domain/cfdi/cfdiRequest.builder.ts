@@ -3,6 +3,10 @@ import { IFiscalSnapshot } from '../fiscalSnapshots/fiscalSnapshot.model';
 import { IInvoiceDraft } from '../invoiceDrafts/invoiceDraft.model';
 import { IInvoiceRecord } from '../invoiceRecords/invoiceRecord.model';
 import { ITransaction } from '../transactions/transaction.model';
+import {
+  INTERNAL_CFDI_DEFAULT_PRODUCT_SERVICE_KEY,
+  INTERNAL_CFDI_DEFAULT_UNIT_KEY,
+} from './cfdiCatalogs';
 import { CfdiRequest } from './cfdi.types';
 
 type FiscalProfileSnapshot = {
@@ -53,7 +57,9 @@ export function buildCfdiRequest(input: BuildCfdiRequestInput): CfdiRequest {
     concepts: [
       {
         description: 'Operacion Mercado Ganadero',
+        productServiceKey: INTERNAL_CFDI_DEFAULT_PRODUCT_SERVICE_KEY,
         quantity: 1,
+        unitKey: INTERNAL_CFDI_DEFAULT_UNIT_KEY,
         unitPrice: amount,
         amount,
         taxObject: '02',
