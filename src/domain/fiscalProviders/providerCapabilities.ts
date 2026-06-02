@@ -45,3 +45,15 @@ export const sandboxPacProviderCapabilities: ProviderCapabilities = {
   traceSupported: true,
   retrySupported: true,
 };
+
+export const facturamaProviderCapabilities: ProviderCapabilities = {
+  validateInvoiceInput: false,
+  issueInvoice: false,
+  cancelInvoice: false,
+  getInvoiceStatus: false,
+  externalConnectivity: 'not_tested',
+  sandboxSupported: true,
+  productionSupported: false,
+  traceSupported: true,
+  retrySupported: true,
+};

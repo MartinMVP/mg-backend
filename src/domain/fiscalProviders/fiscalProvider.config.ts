@@ -36,24 +36,38 @@ function parseNonNegativeInt(value: string | undefined, fallback: number) {
 
 export function getFiscalProviderConfig(source: NodeJS.ProcessEnv = process.env): FiscalProviderConfig {
   const provider = source.FISCAL_PROVIDER?.trim() || 'mock';
-  const environment = source.FISCAL_PROVIDER_ENVIRONMENT?.trim() || (provider === 'mock' ? 'mock' : 'sandbox');
+  const isFacturama = provider === 'facturama';
+  const environment = (
+    isFacturama
+      ? source.FACTURAMA_ENVIRONMENT?.trim() || source.FISCAL_PROVIDER_ENVIRONMENT?.trim()
+      : source.FISCAL_PROVIDER_ENVIRONMENT?.trim()
+  ) || (provider === 'mock' ? 'mock' : 'sandbox');
   const defaultEnabled = parseBool(source.FISCAL_PROVIDER_ENABLED, true);
   const sandboxEnabled = parseBool(source.FISCAL_PROVIDER_SANDBOX_ENABLED, false);
   const isSandboxPac = provider === 'sandbox-pac';
+  const facturamaEnabled = parseBool(source.FACTURAMA_ENABLED, false);
 
   return {
     provider,
     environment,
-    enabled: isSandboxPac ? defaultEnabled && sandboxEnabled : defaultEnabled,
+    enabled: isSandboxPac
+      ? defaultEnabled && sandboxEnabled
+      : isFacturama
+        ? defaultEnabled && facturamaEnabled
+        : defaultEnabled,
     sandbox: parseBool(source.FISCAL_PROVIDER_SANDBOX, environment !== 'production'),
     apiUrl: (
       isSandboxPac
         ? source.FISCAL_PROVIDER_SANDBOX_API_URL?.trim() || source.FISCAL_PROVIDER_API_URL?.trim()
+        : isFacturama
+          ? source.FACTURAMA_API_URL?.trim() || source.FISCAL_PROVIDER_API_URL?.trim()
         : source.FISCAL_PROVIDER_API_URL?.trim()
     ) || null,
     timeoutMs: parseTimeout(
       isSandboxPac
         ? source.FISCAL_PROVIDER_SANDBOX_TIMEOUT_MS || source.FISCAL_PROVIDER_TIMEOUT_MS
+        : isFacturama
+          ? source.FACTURAMA_TIMEOUT_MS || source.FISCAL_PROVIDER_TIMEOUT_MS
         : source.FISCAL_PROVIDER_TIMEOUT_MS
     ),
     maxRetries: parseNonNegativeInt(source.FISCAL_PROVIDER_MAX_RETRIES, 2),

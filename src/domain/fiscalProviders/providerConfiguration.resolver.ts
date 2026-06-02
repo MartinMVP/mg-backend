@@ -56,7 +56,7 @@ export function resolveProviderConfiguration(
     maxProviderPayloadBytes: config.maxProviderPayloadBytes,
   };
 
-  const enabled = config.provider === 'sandbox-pac'
+  const enabled = config.provider === 'sandbox-pac' || config.provider === 'facturama'
     ? config.enabled
     : config.enabled && Boolean(descriptor?.enabled);
 
@@ -86,7 +86,7 @@ export async function evaluateProviderReadiness(
 
   if (!descriptor) {
     issues.push('provider_not_registered');
-  } else if (!descriptor.enabled && config.provider !== 'sandbox-pac') {
+  } else if (!descriptor.enabled && config.provider !== 'sandbox-pac' && config.provider !== 'facturama') {
     issues.push('provider_disabled');
   }
 

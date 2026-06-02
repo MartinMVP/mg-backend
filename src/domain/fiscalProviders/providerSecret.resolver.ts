@@ -22,9 +22,10 @@ export function resolveProviderSecretStatus(
   source: NodeJS.ProcessEnv = process.env,
   config: FiscalProviderConfig = getFiscalProviderConfig(source)
 ): ProviderSecretStatus {
-  const hasUsername = hasValue(source.FISCAL_PROVIDER_SANDBOX_USERNAME);
-  const hasPassword = hasValue(source.FISCAL_PROVIDER_SANDBOX_PASSWORD);
-  const hasApiKey = hasValue(source.FISCAL_PROVIDER_SANDBOX_API_KEY);
+  const isFacturama = config.provider === 'facturama';
+  const hasUsername = hasValue(isFacturama ? source.FACTURAMA_USERNAME : source.FISCAL_PROVIDER_SANDBOX_USERNAME);
+  const hasPassword = hasValue(isFacturama ? source.FACTURAMA_PASSWORD : source.FISCAL_PROVIDER_SANDBOX_PASSWORD);
+  const hasApiKey = hasValue(isFacturama ? source.FACTURAMA_API_KEY : source.FISCAL_PROVIDER_SANDBOX_API_KEY);
   const hasToken = hasValue(source.FISCAL_PROVIDER_SANDBOX_TOKEN);
   const hasCertificateRef = hasValue(source.FISCAL_PROVIDER_SANDBOX_CERTIFICATE_REF);
   const hasUsernamePassword = hasUsername && hasPassword;

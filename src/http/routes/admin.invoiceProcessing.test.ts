@@ -36,6 +36,7 @@ import {
   listFiscalProviders,
   resolveFiscalProvider,
 } from '../../domain/fiscalProviders/fiscalProvider.registry';
+import { FacturamaProvider } from '../../domain/fiscalProviders/facturamaProvider';
 import { MockPacAdapter } from '../../domain/fiscalProviders/mockPacAdapter';
 import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
 import { SandboxPacAdapter } from '../../domain/fiscalProviders/sandboxPacAdapter';
@@ -207,6 +208,7 @@ describe('admin fiscal invoice processing', () => {
       expect.objectContaining({ name: 'future-pac-1', enabled: false }),
       expect.objectContaining({ name: 'future-pac-2', enabled: false }),
       expect.objectContaining({ name: 'sandbox-pac', enabled: false, sandbox: true }),
+      expect.objectContaining({ name: 'facturama', enabled: false, sandbox: true }),
     ]));
   });
 
@@ -242,7 +244,7 @@ describe('admin fiscal invoice processing', () => {
     });
     expect(resolved.provider.name).toBe('mock');
     expect(providers.map((provider) => provider.name)).toEqual(
-      expect.arrayContaining(['mock', 'future-pac-1', 'future-pac-2', 'sandbox-pac'])
+      expect.arrayContaining(['mock', 'future-pac-1', 'future-pac-2', 'sandbox-pac', 'facturama'])
     );
   });
 
@@ -568,6 +570,181 @@ describe('admin fiscal invoice processing', () => {
       message: 'Sandbox HTTP client is a local stub and performs no external calls',
     });
     expect(get).toEqual(post);
+  });
+
+  it('registers Facturama as the selected future PAC while keeping it disabled by default', () => {
+    const providers = listFiscalProviders();
+    const facturama = providers.find((provider) => provider.name === 'facturama');
+    const capabilities = getFiscalProviderCapabilities('facturama');
+
+    expect(getFiscalProviderConfig({}).provider).toBe('mock');
+    expect(hasFiscalProviderFactory('facturama')).toBe(true);
+    expect(facturama).toMatchObject({
+      name: 'facturama',
+      displayName: 'Facturama Provider',
+      enabled: false,
+      sandbox: true,
+    });
+    expect(capabilities).toMatchObject({
+      provider: 'facturama',
+      enabled: false,
+      capabilities: {
+        issueInvoice: false,
+        cancelInvoice: false,
+        getInvoiceStatus: false,
+        sandboxSupported: true,
+        externalConnectivity: 'not_tested',
+      },
+    });
+  });
+
+  it('does not resolve Facturama when disabled or not ready', async () => {
+    const disabledConfig = getFiscalProviderConfig({
+      FISCAL_PROVIDER: 'facturama',
+      FACTURAMA_ENVIRONMENT: 'sandbox',
+    });
+    const configuredButDisabled = getFiscalProviderConfig({
+      FISCAL_PROVIDER: 'facturama',
+      FACTURAMA_ENABLED: 'true',
+      FACTURAMA_ENVIRONMENT: 'sandbox',
+      FACTURAMA_API_URL: 'https://facturama.invalid',
+      FACTURAMA_API_KEY: 'fake-key-not-returned',
+    });
+
+    await withEnv({ FACTURAMA_API_KEY: 'fake-key-not-returned' }, async () => {
+      const readiness = await evaluateProviderReadiness(configuredButDisabled);
+
+      expect(() => resolveFiscalProvider(disabledConfig)).toThrow('Fiscal provider is disabled: facturama');
+      expect(() => resolveFiscalProvider(configuredButDisabled)).toThrow('Facturama provider is not ready');
+      expect(readiness.ready).toBe(false);
+      expect(readiness.issues).toEqual(expect.arrayContaining([
+        'facturama_integration_disabled',
+        'provider_health_disabled',
+      ]));
+      expect(JSON.stringify(readiness)).not.toMatch(/fake-key-not-returned|https:\/\/facturama\.invalid|password|secret|token/i);
+    });
+  });
+
+  it('reports Facturama readiness issues without exposing configured secrets', async () => {
+    const missingConfig = getFiscalProviderConfig({
+      FISCAL_PROVIDER: 'facturama',
+      FACTURAMA_ENABLED: 'true',
+      FACTURAMA_ENVIRONMENT: 'production',
+    });
+    const safeConfig = getFiscalProviderConfig({
+      FISCAL_PROVIDER: 'facturama',
+      FACTURAMA_ENABLED: 'true',
+      FACTURAMA_ENVIRONMENT: 'sandbox',
+      FACTURAMA_API_URL: 'https://facturama.invalid',
+      FACTURAMA_USERNAME: 'fake-user-not-returned',
+      FACTURAMA_PASSWORD: 'fake-password-not-returned',
+    });
+
+    await withEnv({
+      FACTURAMA_USERNAME: 'fake-user-not-returned',
+      FACTURAMA_PASSWORD: 'fake-password-not-returned',
+    }, async () => {
+      const missingReadiness = await evaluateProviderReadiness(missingConfig);
+      const safeResolved = resolveProviderConfiguration(safeConfig);
+
+      expect(missingReadiness.issues).toEqual(expect.arrayContaining([
+        'facturama_environment_invalid',
+        'missing_facturama_api_url',
+      ]));
+      expect(safeResolved.safeConfig).toMatchObject({
+        provider: 'facturama',
+        hasApiUrl: true,
+      });
+      expect(safeResolved.secretStatus).toMatchObject({
+        hasUsername: true,
+        hasPassword: true,
+        hasCredentials: true,
+      });
+      expect(safeResolved.configValidation.issues).toContain('facturama_integration_disabled');
+      expect(JSON.stringify({ missingReadiness, safeResolved }))
+        .not.toMatch(/fake-user-not-returned|fake-password-not-returned|https:\/\/facturama\.invalid/i);
+    });
+  });
+
+  it('FacturamaProvider returns controlled local responses without CFDI artifacts or external calls', async () => {
+    const provider = new FacturamaProvider({
+      config: getFiscalProviderConfig({
+        FISCAL_PROVIDER: 'facturama',
+        FACTURAMA_ENVIRONMENT: 'sandbox',
+      }),
+      readinessIssues: ['provider_not_ready'],
+    });
+    const input = {
+      transactionId: new Types.ObjectId(),
+      invoiceDraftId: new Types.ObjectId(),
+      invoiceQueueId: new Types.ObjectId(),
+      idempotencyKey: 'facturama:test',
+    };
+
+    const validation = await provider.validateInvoiceInput(input);
+    const issue = await provider.issueInvoice(input);
+    const cancel = await provider.cancelInvoice(input);
+    const status = await provider.getInvoiceStatus(input);
+    const health = await provider.checkHealth();
+    const serialized = JSON.stringify({ validation, issue, cancel, status, health });
+
+    expect(validation).toEqual({ ok: false, message: 'provider_not_ready' });
+    expect(issue).toMatchObject({
+      ok: false,
+      providerStatus: 'failed',
+      providerMessage: 'provider_not_ready',
+      providerRequestId: 'facturama:test',
+    });
+    expect(cancel.providerRequestId).toBe('facturama:test');
+    expect(status.ok).toBe(false);
+    expect(health).toMatchObject({
+      ok: false,
+      provider: 'facturama',
+      status: 'disabled',
+    });
+    expect(serialized).not.toMatch(/xml|pdf|uuid|timbre|sello|certificado/i);
+  });
+
+  it('exposes Facturama through current provider endpoints without secrets or resolution fallback', async () => {
+    const token = await authToken('admin');
+
+    await withEnv({
+      FISCAL_PROVIDER: 'facturama',
+      FACTURAMA_ENABLED: 'true',
+      FACTURAMA_ENVIRONMENT: 'sandbox',
+      FACTURAMA_API_URL: 'https://facturama.invalid',
+      FACTURAMA_API_KEY: 'fake-key-not-returned',
+    }, async () => {
+      const current = await request(app)
+        .get('/admin/fiscal/providers/current')
+        .set('Authorization', bearer(token));
+      const config = await request(app)
+        .get('/admin/fiscal/providers/current/config')
+        .set('Authorization', bearer(token));
+      const readiness = await request(app)
+        .get('/admin/fiscal/providers/current/readiness')
+        .set('Authorization', bearer(token));
+
+      expect(current.status).toBe(409);
+      expect(current.body).toMatchObject({
+        error: 'Fiscal provider is not resolvable',
+        provider: 'facturama',
+      });
+      expect(config.status).toBe(200);
+      expect(config.body.configuration).toMatchObject({
+        provider: 'facturama',
+        enabled: true,
+      });
+      expect(readiness.status).toBe(200);
+      expect(readiness.body.readiness).toMatchObject({
+        ready: false,
+        provider: 'facturama',
+        environment: 'sandbox',
+      });
+      expect(readiness.body.readiness.issues).toContain('facturama_integration_disabled');
+      expect(JSON.stringify({ current: current.body, config: config.body, readiness: readiness.body }))
+        .not.toMatch(/fake-key-not-returned|https:\/\/facturama\.invalid/i);
+    });
   });
 
   it('defines sandbox resilience and payload limit contracts without network behavior', () => {

@@ -4,10 +4,12 @@ import {
   getFiscalProviderConfig,
   toSafeFiscalProviderConfig,
 } from './fiscalProvider.config';
+import { FacturamaProvider } from './facturamaProvider';
 import { mockFiscalProvider } from './mockFiscalProvider';
 import { SandboxFiscalProvider } from './sandboxFiscalProvider';
 import {
   disabledFutureProviderCapabilities,
+  facturamaProviderCapabilities,
   mockProviderCapabilities,
   ProviderCapabilities,
   sandboxPacProviderCapabilities,
@@ -39,11 +41,30 @@ function getSandboxPacReadinessIssues(config: FiscalProviderConfig) {
   return [...new Set(issues)];
 }
 
+function getFacturamaReadinessIssues(config: FiscalProviderConfig) {
+  const issues: string[] = [];
+  const secrets = resolveProviderSecretStatus(process.env, config);
+
+  if (config.provider !== 'facturama') issues.push('invalid_provider');
+  if (!config.enabled) issues.push('provider_config_disabled');
+  if (config.environment !== 'sandbox') issues.push('facturama_environment_invalid');
+  if (!config.sandbox) issues.push('sandbox_flag_required');
+  if (!config.apiUrl) issues.push('missing_facturama_api_url');
+  if (!secrets.hasCredentials) issues.push('facturama_credentials_missing');
+  issues.push('facturama_integration_disabled');
+
+  return [...new Set(issues)];
+}
+
 const providerFactories: Record<string, ProviderFactory> = {
   mock: () => mockFiscalProvider,
   'sandbox-pac': (config) => new SandboxFiscalProvider({
     config,
     readinessIssues: getSandboxPacReadinessIssues(config),
+  }),
+  facturama: (config) => new FacturamaProvider({
+    config,
+    readinessIssues: getFacturamaReadinessIssues(config),
   }),
 };
 
@@ -75,6 +96,13 @@ const providerCatalog: FiscalProviderDescriptor[] = [
     enabled: false,
     sandbox: true,
     capabilities: sandboxPacProviderCapabilities,
+  },
+  {
+    name: 'facturama',
+    displayName: 'Facturama Provider',
+    enabled: false,
+    sandbox: true,
+    capabilities: facturamaProviderCapabilities,
   },
 ];
 
@@ -108,7 +136,7 @@ export async function checkFiscalProviderHealth(
   const descriptor = findFiscalProviderDescriptor(providerName);
   if (!descriptor) return null;
 
-  const enabled = providerName === 'sandbox-pac'
+  const enabled = providerName === 'sandbox-pac' || providerName === 'facturama'
     ? config.enabled
     : descriptor.enabled && config.enabled;
 
@@ -153,6 +181,13 @@ export function resolveFiscalProvider(config: FiscalProviderConfig = getFiscalPr
     const issues = getSandboxPacReadinessIssues(config);
     if (issues.length > 0) {
       throw new Error(`Sandbox fiscal provider is not ready: ${issues.join(',')}`);
+    }
+  }
+
+  if (config.provider === 'facturama') {
+    const issues = getFacturamaReadinessIssues(config);
+    if (issues.length > 0) {
+      throw new Error(`Facturama provider is not ready: ${issues.join(',')}`);
     }
   }
 

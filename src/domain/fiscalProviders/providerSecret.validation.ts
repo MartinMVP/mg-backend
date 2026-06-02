@@ -49,13 +49,13 @@ export function validateProviderSecretStructure(
     }
   }
 
-  if (config.provider === 'sandbox-pac') {
+  if (config.provider === 'sandbox-pac' || config.provider === 'facturama') {
     const hasUsernamePassword = Boolean(credentialShape.username && credentialShape.password);
     const hasApiKey = Boolean(credentialShape.apiKey);
     const hasCertificateReference = Boolean(credentialShape.certificateReference);
 
     if (!hasUsernamePassword && !hasApiKey && !hasCertificateReference) {
-      issues.push('sandbox_credentials_missing');
+      issues.push(config.provider === 'facturama' ? 'facturama_credentials_missing' : 'sandbox_credentials_missing');
     }
   }
 

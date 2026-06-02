@@ -18,7 +18,7 @@ export function validateFiscalProviderConfig(config: FiscalProviderConfig): Fisc
 
   if (!descriptor) {
     issues.push('provider_not_registered');
-  } else if (!descriptor.enabled && config.provider !== 'sandbox-pac') {
+  } else if (!descriptor.enabled && config.provider !== 'sandbox-pac' && config.provider !== 'facturama') {
     issues.push('provider_disabled');
   }
 
@@ -64,6 +64,24 @@ export function validateFiscalProviderConfig(config: FiscalProviderConfig): Fisc
     if (!Number.isFinite(config.timeoutMs) || config.timeoutMs < MIN_TIMEOUT_MS || config.timeoutMs > MAX_TIMEOUT_MS) {
       issues.push('sandbox_timeout_invalid');
     }
+  }
+
+  if (config.provider === 'facturama') {
+    if (!config.enabled) {
+      issues.push('facturama_provider_disabled');
+    }
+
+    if (config.environment !== 'sandbox') {
+      issues.push('invalid_provider_environment');
+      issues.push('facturama_environment_invalid');
+    }
+
+    if (!config.apiUrl) {
+      issues.push('missing_facturama_api_url');
+      issues.push('facturama_api_url_missing');
+    }
+
+    issues.push('facturama_integration_disabled');
   }
 
   return {
