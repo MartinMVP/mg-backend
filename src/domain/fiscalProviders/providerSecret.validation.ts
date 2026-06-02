@@ -48,6 +48,13 @@ export function validateProviderSecretStructure(
     }
   }
 
+  if (
+    config.provider === 'sandbox-pac'
+    && contract.requiredFields.some((field) => !credentialShape[field])
+  ) {
+    issues.push('missing_sandbox_credentials');
+  }
+
   if (config.provider === 'mock' && Object.values(credentialShape).some(Boolean)) {
     issues.push('mock_provider_must_not_receive_credentials');
   }

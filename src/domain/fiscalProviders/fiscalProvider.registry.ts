@@ -9,6 +9,7 @@ import {
   disabledFutureProviderCapabilities,
   mockProviderCapabilities,
   ProviderCapabilities,
+  sandboxPacProviderCapabilities,
 } from './providerCapabilities';
 import { ProviderHealthResult } from './providerHealth';
 
@@ -46,6 +47,13 @@ const providerCatalog: FiscalProviderDescriptor[] = [
     sandbox: true,
     capabilities: disabledFutureProviderCapabilities,
   },
+  {
+    name: 'sandbox-pac',
+    displayName: 'Sandbox PAC Provider Placeholder',
+    enabled: false,
+    sandbox: true,
+    capabilities: sandboxPacProviderCapabilities,
+  },
 ];
 
 export function listFiscalProviders() {
@@ -65,6 +73,10 @@ export function getFiscalProviderCapabilities(providerName: string) {
     enabled: descriptor.enabled,
     capabilities: { ...descriptor.capabilities },
   };
+}
+
+export function hasFiscalProviderFactory(providerName: string) {
+  return Boolean(providerFactories[providerName]);
 }
 
 export async function checkFiscalProviderHealth(

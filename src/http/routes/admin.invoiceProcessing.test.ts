@@ -23,6 +23,7 @@ import {
 } from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { MockPacAdapter } from '../../domain/fiscalProviders/mockPacAdapter';
 import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
+import { SandboxPacAdapter } from '../../domain/fiscalProviders/sandboxPacAdapter';
 import { ProviderTrace } from '../../domain/fiscalProviders/providerTrace.model';
 import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
@@ -157,6 +158,7 @@ describe('admin fiscal invoice processing', () => {
       expect.objectContaining({ name: 'mock', enabled: true, sandbox: true }),
       expect.objectContaining({ name: 'future-pac-1', enabled: false }),
       expect.objectContaining({ name: 'future-pac-2', enabled: false }),
+      expect.objectContaining({ name: 'sandbox-pac', enabled: false, sandbox: true }),
     ]));
   });
 
@@ -192,7 +194,7 @@ describe('admin fiscal invoice processing', () => {
     });
     expect(resolved.provider.name).toBe('mock');
     expect(providers.map((provider) => provider.name)).toEqual(
-      expect.arrayContaining(['mock', 'future-pac-1', 'future-pac-2'])
+      expect.arrayContaining(['mock', 'future-pac-1', 'future-pac-2', 'sandbox-pac'])
     );
   });
 
@@ -252,6 +254,111 @@ describe('admin fiscal invoice processing', () => {
       provider: 'future-pac-1',
       status: 'disabled',
     });
+  });
+
+  it('exposes sandbox PAC placeholder as disabled and not default', () => {
+    const providers = listFiscalProviders();
+    const defaultConfig = getFiscalProviderConfig({});
+    const sandbox = providers.find((provider) => provider.name === 'sandbox-pac');
+
+    expect(defaultConfig.provider).toBe('mock');
+    expect(sandbox).toMatchObject({
+      name: 'sandbox-pac',
+      enabled: false,
+      sandbox: true,
+      capabilities: {
+        issueInvoice: true,
+        cancelInvoice: true,
+        getInvoiceStatus: true,
+        sandboxSupported: true,
+        productionSupported: false,
+      },
+    });
+  });
+
+  it('does not resolve sandbox PAC while it is disabled and has no factory', () => {
+    expect(() => resolveFiscalProvider({
+      ...getFiscalProviderConfig({}),
+      provider: 'sandbox-pac',
+      environment: 'sandbox',
+      sandbox: true,
+    })).toThrow('Unsupported fiscal provider: sandbox-pac');
+  });
+
+  it('returns clear sandbox readiness issues without exposing secrets', async () => {
+    const readiness = await evaluateProviderReadiness({
+      ...getFiscalProviderConfig({}),
+      provider: 'sandbox-pac',
+      environment: 'sandbox',
+      sandbox: true,
+      apiUrl: null,
+      timeoutMs: 10_000,
+    });
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.issues).toEqual(expect.arrayContaining([
+      'provider_disabled',
+      'provider_not_resolvable',
+      'provider_health_disabled',
+      'missing_sandbox_api_url',
+      'missing_sandbox_credentials',
+      'missing_apiKey',
+      'missing_certificateReference',
+    ]));
+    expect(JSON.stringify(readiness)).not.toMatch(/password|apiKey-value|token|secret|certificate-value/i);
+  });
+
+  it('returns disabled sandbox health without network calls or traces', async () => {
+    const tracesBefore = await ProviderTrace.countDocuments();
+    const health = await checkFiscalProviderHealth('sandbox-pac', {
+      ...getFiscalProviderConfig({}),
+      provider: 'sandbox-pac',
+      environment: 'sandbox',
+      sandbox: true,
+    });
+
+    expect(health).toMatchObject({
+      ok: false,
+      provider: 'sandbox-pac',
+      environment: 'sandbox',
+      status: 'disabled',
+    });
+    expect(await ProviderTrace.countDocuments()).toBe(tracesBefore);
+  });
+
+  it('sandbox PAC adapter returns controlled errors without XML PDF UUID or external calls', async () => {
+    const adapter = new SandboxPacAdapter();
+    const issue = await adapter.issue({
+      transactionId: 'transaction-id',
+      invoiceDraftId: 'draft-id',
+      invoiceQueueId: 'queue-id',
+    });
+    const cancel = await adapter.cancel({
+      transactionId: 'transaction-id',
+      invoiceDraftId: 'draft-id',
+      invoiceQueueId: 'queue-id',
+    });
+    const status = await adapter.getStatus({
+      transactionId: 'transaction-id',
+      invoiceQueueId: 'queue-id',
+    });
+
+    expect(issue).toMatchObject({
+      ok: false,
+      providerStatus: 'failed',
+      error: { code: 'PAC_AUTH_ERROR', retryable: false },
+    });
+    expect(cancel).toMatchObject({
+      ok: false,
+      providerStatus: 'failed',
+      error: { code: 'PAC_AUTH_ERROR', retryable: false },
+    });
+    expect(status).toMatchObject({
+      ok: false,
+      providerStatus: 'failed',
+      error: { code: 'PAC_AUTH_ERROR', retryable: false },
+    });
+    expect(JSON.stringify({ issue, cancel, status })).not.toMatch(/xml|pdf|uuid|timbre|sello|certificado/i);
   });
 
   it('validates current mock provider config', () => {
@@ -314,6 +421,12 @@ describe('admin fiscal invoice processing', () => {
     const disabledHealth = await request(app)
       .get('/admin/fiscal/providers/future-pac-1/health')
       .set('Authorization', bearer(token));
+    const sandboxCapabilities = await request(app)
+      .get('/admin/fiscal/providers/sandbox-pac/capabilities')
+      .set('Authorization', bearer(token));
+    const sandboxHealth = await request(app)
+      .get('/admin/fiscal/providers/sandbox-pac/health')
+      .set('Authorization', bearer(token));
 
     expect(health.status).toBe(200);
     expect(health.body).toMatchObject({ ok: true, provider: 'mock', status: 'healthy' });
@@ -322,6 +435,16 @@ describe('admin fiscal invoice processing', () => {
     expect(JSON.stringify(validation.body)).not.toMatch(/secret|token|password/i);
     expect(disabledHealth.status).toBe(200);
     expect(disabledHealth.body).toMatchObject({ ok: false, provider: 'future-pac-1', status: 'disabled' });
+    expect(sandboxCapabilities.status).toBe(200);
+    expect(sandboxCapabilities.body).toMatchObject({
+      provider: 'sandbox-pac',
+      enabled: false,
+      capabilities: { issueInvoice: true, sandboxSupported: true },
+    });
+    expect(sandboxHealth.status).toBe(200);
+    expect(sandboxHealth.body).toMatchObject({ ok: false, provider: 'sandbox-pac', status: 'disabled' });
+    expect(JSON.stringify({ sandboxCapabilities: sandboxCapabilities.body, sandboxHealth: sandboxHealth.body }))
+      .not.toMatch(/secret|password|token|xml|pdf|uuid|timbre/i);
   });
 
   it('does not create ProviderTrace on provider readiness endpoints', async () => {

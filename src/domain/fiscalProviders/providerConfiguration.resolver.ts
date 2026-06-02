@@ -1,6 +1,10 @@
 import { FiscalProviderConfig, getFiscalProviderConfig, toSafeFiscalProviderConfig } from './fiscalProvider.config';
 import { validateFiscalProviderConfig } from './fiscalProvider.validation';
-import { findFiscalProviderDescriptor, checkFiscalProviderHealth } from './fiscalProvider.registry';
+import {
+  findFiscalProviderDescriptor,
+  checkFiscalProviderHealth,
+  hasFiscalProviderFactory,
+} from './fiscalProvider.registry';
 import { getProviderCredentialContract, toSafeCredentialContract } from './providerCredentials.types';
 import { getProviderEnvironmentRules } from './providerEnvironment';
 import { validateProviderSecretStructure } from './providerSecret.validation';
@@ -69,6 +73,10 @@ export async function evaluateProviderReadiness(
 
   if (!resolved.capabilities) {
     issues.push('provider_capabilities_missing');
+  }
+
+  if (descriptor && !hasFiscalProviderFactory(config.provider)) {
+    issues.push('provider_not_resolvable');
   }
 
   issues.push(...resolved.configValidation.issues);

@@ -46,6 +46,16 @@ export function validateFiscalProviderConfig(config: FiscalProviderConfig): Fisc
     issues.push('mock_provider_does_not_use_api_url');
   }
 
+  if (config.provider === 'sandbox-pac') {
+    if (config.environment !== 'sandbox') {
+      issues.push('invalid_provider_environment');
+    }
+
+    if (!config.apiUrl) {
+      issues.push('missing_sandbox_api_url');
+    }
+  }
+
   return {
     valid: issues.length === 0,
     issues,

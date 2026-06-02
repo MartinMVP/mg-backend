@@ -30,3 +30,14 @@ export const disabledFutureProviderCapabilities: ProviderCapabilities = {
   traceSupported: false,
   retrySupported: false,
 };
+
+export const sandboxPacProviderCapabilities: ProviderCapabilities = {
+  validateInvoiceInput: true,
+  issueInvoice: true,
+  cancelInvoice: true,
+  getInvoiceStatus: true,
+  sandboxSupported: true,
+  productionSupported: false,
+  traceSupported: true,
+  retrySupported: true,
+};
