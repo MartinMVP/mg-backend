@@ -24,7 +24,16 @@ const emptyContract = (provider: string, environment: string): ProviderCredentia
 export function getProviderCredentialContract(provider: string, environment: string): ProviderCredentialContract {
   if (provider === 'mock') return emptyContract(provider, environment);
 
-  if (provider === 'future-pac-1' || provider === 'future-pac-2' || provider === 'sandbox-pac') {
+  if (provider === 'sandbox-pac') {
+    return {
+      provider,
+      environment,
+      requiredFields: [],
+      optionalFields: ['username', 'password', 'apiKey', 'token', 'certificateReference'],
+    };
+  }
+
+  if (provider === 'future-pac-1' || provider === 'future-pac-2') {
     return {
       provider,
       environment,

@@ -47,12 +47,22 @@ export function validateFiscalProviderConfig(config: FiscalProviderConfig): Fisc
   }
 
   if (config.provider === 'sandbox-pac') {
+    if (!config.enabled) {
+      issues.push('sandbox_provider_disabled');
+    }
+
     if (config.environment !== 'sandbox') {
       issues.push('invalid_provider_environment');
+      issues.push('sandbox_environment_invalid');
     }
 
     if (!config.apiUrl) {
       issues.push('missing_sandbox_api_url');
+      issues.push('sandbox_api_url_missing');
+    }
+
+    if (!Number.isFinite(config.timeoutMs) || config.timeoutMs < MIN_TIMEOUT_MS || config.timeoutMs > MAX_TIMEOUT_MS) {
+      issues.push('sandbox_timeout_invalid');
     }
   }
 

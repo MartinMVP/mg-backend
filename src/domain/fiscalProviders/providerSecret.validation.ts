@@ -5,6 +5,7 @@ import {
 } from './providerCredentials.types';
 import { FiscalProviderConfig } from './fiscalProvider.config';
 import { getProviderEnvironmentRules } from './providerEnvironment';
+import { resolveProviderSecretStatus } from './providerSecret.resolver';
 
 export type ProviderSecretValidationResult = {
   valid: boolean;
@@ -23,7 +24,7 @@ const credentialFields: ProviderCredentialField[] = [
 
 export function validateProviderSecretStructure(
   config: FiscalProviderConfig,
-  credentialShape: ProviderCredentialShape = {}
+  credentialShape: ProviderCredentialShape = resolveProviderSecretStatus(process.env, config).credentialShape
 ): ProviderSecretValidationResult {
   const issues: string[] = [];
   const environmentRules = getProviderEnvironmentRules(config.environment);
@@ -48,11 +49,14 @@ export function validateProviderSecretStructure(
     }
   }
 
-  if (
-    config.provider === 'sandbox-pac'
-    && contract.requiredFields.some((field) => !credentialShape[field])
-  ) {
-    issues.push('missing_sandbox_credentials');
+  if (config.provider === 'sandbox-pac') {
+    const hasUsernamePassword = Boolean(credentialShape.username && credentialShape.password);
+    const hasApiKey = Boolean(credentialShape.apiKey);
+    const hasCertificateReference = Boolean(credentialShape.certificateReference);
+
+    if (!hasUsernamePassword && !hasApiKey && !hasCertificateReference) {
+      issues.push('sandbox_credentials_missing');
+    }
   }
 
   if (config.provider === 'mock' && Object.values(credentialShape).some(Boolean)) {

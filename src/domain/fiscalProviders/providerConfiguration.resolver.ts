@@ -8,6 +8,11 @@ import {
 import { getProviderCredentialContract, toSafeCredentialContract } from './providerCredentials.types';
 import { getProviderEnvironmentRules } from './providerEnvironment';
 import { validateProviderSecretStructure } from './providerSecret.validation';
+import { resolveProviderSecretStatus, toSafeProviderSecretStatus } from './providerSecret.resolver';
+import {
+  defaultProviderResilienceConfig,
+  validateProviderResilienceConfig,
+} from './providerResilience.types';
 
 export type ResolvedProviderConfiguration = {
   provider: string;
@@ -18,8 +23,11 @@ export type ResolvedProviderConfiguration = {
   capabilities: unknown;
   environmentRules: ReturnType<typeof getProviderEnvironmentRules>;
   credentialContract: ReturnType<typeof toSafeCredentialContract>;
+  secretStatus: ReturnType<typeof toSafeProviderSecretStatus>;
+  resilience: typeof defaultProviderResilienceConfig;
   configValidation: ReturnType<typeof validateFiscalProviderConfig>;
   credentialValidation: ReturnType<typeof validateProviderSecretStructure>;
+  resilienceValidation: ReturnType<typeof validateProviderResilienceConfig>;
 };
 
 export type ProviderReadinessResult = {
@@ -35,6 +43,12 @@ export function resolveProviderConfiguration(
   const descriptor = findFiscalProviderDescriptor(config.provider);
   const environmentRules = getProviderEnvironmentRules(config.environment);
   const credentialContract = getProviderCredentialContract(config.provider, config.environment);
+  const secretStatus = resolveProviderSecretStatus(process.env, config);
+  const resilience = {
+    ...defaultProviderResilienceConfig,
+    timeoutMs: config.timeoutMs,
+    maxProviderPayloadBytes: config.maxProviderPayloadBytes,
+  };
 
   return {
     provider: config.provider,
@@ -45,8 +59,11 @@ export function resolveProviderConfiguration(
     capabilities: descriptor?.capabilities || null,
     environmentRules,
     credentialContract: toSafeCredentialContract(credentialContract),
+    secretStatus: toSafeProviderSecretStatus(secretStatus),
+    resilience,
     configValidation: validateFiscalProviderConfig(config),
-    credentialValidation: validateProviderSecretStructure(config),
+    credentialValidation: validateProviderSecretStructure(config, secretStatus.credentialShape),
+    resilienceValidation: validateProviderResilienceConfig(resilience),
   };
 }
 
@@ -77,10 +94,14 @@ export async function evaluateProviderReadiness(
 
   if (descriptor && !hasFiscalProviderFactory(config.provider)) {
     issues.push('provider_not_resolvable');
+    if (config.provider === 'sandbox-pac') {
+      issues.push('sandbox_provider_not_resolvable');
+    }
   }
 
   issues.push(...resolved.configValidation.issues);
   issues.push(...resolved.credentialValidation.issues);
+  issues.push(...resolved.resilienceValidation.issues);
 
   const health = await checkFiscalProviderHealth(config.provider, config);
   if (!health) {

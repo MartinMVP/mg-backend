@@ -13,6 +13,11 @@ import {
 import { getProviderCredentialContract } from '../../domain/fiscalProviders/providerCredentials.types';
 import { normalizeProviderEnvironment } from '../../domain/fiscalProviders/providerEnvironment';
 import { validateProviderSecretStructure } from '../../domain/fiscalProviders/providerSecret.validation';
+import { resolveProviderSecretStatus } from '../../domain/fiscalProviders/providerSecret.resolver';
+import {
+  defaultProviderResilienceConfig,
+  validateProviderResilienceConfig,
+} from '../../domain/fiscalProviders/providerResilience.types';
 import { PacAdapter } from '../../domain/fiscalProviders/pacAdapter.interface';
 import { mapPacError } from '../../domain/fiscalProviders/pacError.mapper';
 import {
@@ -47,6 +52,31 @@ describe('admin fiscal invoice processing', () => {
   async function authToken(role: 'user' | 'admin' | 'super' = 'admin') {
     const user = await createTestUser(role);
     return createAccessToken(String(user._id), role);
+  }
+
+  async function withEnv<T>(env: Record<string, string | undefined>, fn: () => Promise<T> | T): Promise<T> {
+    const previous: Record<string, string | undefined> = {};
+
+    for (const key of Object.keys(env)) {
+      previous[key] = process.env[key];
+      if (env[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = env[key];
+      }
+    }
+
+    try {
+      return await fn();
+    } finally {
+      for (const key of Object.keys(env)) {
+        if (previous[key] === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = previous[key];
+        }
+      }
+    }
   }
 
   async function createQueuedInvoice(status: 'queued' | 'processing' | 'completed' | 'cancelled' = 'queued') {
@@ -299,11 +329,11 @@ describe('admin fiscal invoice processing', () => {
     expect(readiness.issues).toEqual(expect.arrayContaining([
       'provider_disabled',
       'provider_not_resolvable',
+      'sandbox_provider_not_resolvable',
       'provider_health_disabled',
       'missing_sandbox_api_url',
-      'missing_sandbox_credentials',
-      'missing_apiKey',
-      'missing_certificateReference',
+      'sandbox_api_url_missing',
+      'sandbox_credentials_missing',
     ]));
     expect(JSON.stringify(readiness)).not.toMatch(/password|apiKey-value|token|secret|certificate-value/i);
   });
@@ -359,6 +389,102 @@ describe('admin fiscal invoice processing', () => {
       error: { code: 'PAC_AUTH_ERROR', retryable: false },
     });
     expect(JSON.stringify({ issue, cancel, status })).not.toMatch(/xml|pdf|uuid|timbre|sello|certificado/i);
+  });
+
+  it('keeps sandbox PAC disabled by default while mock remains default', () => {
+    const mockConfig = getFiscalProviderConfig({});
+    const sandboxConfig = getFiscalProviderConfig({
+      FISCAL_PROVIDER: 'sandbox-pac',
+      FISCAL_PROVIDER_ENVIRONMENT: 'sandbox',
+    });
+
+    expect(mockConfig).toMatchObject({
+      provider: 'mock',
+      environment: 'mock',
+      enabled: true,
+    });
+    expect(sandboxConfig).toMatchObject({
+      provider: 'sandbox-pac',
+      environment: 'sandbox',
+      enabled: false,
+      sandbox: true,
+      apiUrl: null,
+    });
+  });
+
+  it('fails sandbox readiness when enabled without apiUrl', async () => {
+    const config = getFiscalProviderConfig({
+      FISCAL_PROVIDER: 'sandbox-pac',
+      FISCAL_PROVIDER_ENVIRONMENT: 'sandbox',
+      FISCAL_PROVIDER_SANDBOX_ENABLED: 'true',
+      FISCAL_PROVIDER_SANDBOX_API_KEY: 'present',
+    });
+
+    const readiness = await evaluateProviderReadiness(config);
+
+    expect(config.enabled).toBe(true);
+    expect(readiness.ready).toBe(false);
+    expect(readiness.issues).toEqual(expect.arrayContaining([
+      'sandbox_api_url_missing',
+      'missing_sandbox_api_url',
+      'provider_disabled',
+      'sandbox_provider_not_resolvable',
+    ]));
+    expect(JSON.stringify(readiness)).not.toMatch(/present|secret|password|token/i);
+  });
+
+  it('fails sandbox readiness when enabled without credential flags', async () => {
+    const config = getFiscalProviderConfig({
+      FISCAL_PROVIDER: 'sandbox-pac',
+      FISCAL_PROVIDER_ENVIRONMENT: 'sandbox',
+      FISCAL_PROVIDER_SANDBOX_ENABLED: 'true',
+      FISCAL_PROVIDER_SANDBOX_API_URL: 'https://sandbox.invalid',
+    });
+
+    const readiness = await evaluateProviderReadiness(config);
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.issues).toContain('sandbox_credentials_missing');
+    expect(JSON.stringify(readiness)).not.toContain('https://sandbox.invalid');
+  });
+
+  it('passes sandbox structural secret validation with simulated flags', () => {
+    const config = getFiscalProviderConfig({
+      FISCAL_PROVIDER: 'sandbox-pac',
+      FISCAL_PROVIDER_ENVIRONMENT: 'sandbox',
+      FISCAL_PROVIDER_SANDBOX_ENABLED: 'true',
+      FISCAL_PROVIDER_SANDBOX_API_URL: 'https://sandbox.invalid',
+      FISCAL_PROVIDER_SANDBOX_TIMEOUT_MS: '12000',
+      FISCAL_PROVIDER_SANDBOX_API_KEY: 'fake-key-not-returned',
+    });
+    const secretStatus = resolveProviderSecretStatus({
+      FISCAL_PROVIDER_SANDBOX_API_KEY: 'fake-key-not-returned',
+    }, config);
+    const validation = validateProviderSecretStructure(config, secretStatus.credentialShape);
+
+    expect(secretStatus).toMatchObject({
+      hasApiKey: true,
+      hasCredentials: true,
+    });
+    expect(validation.valid).toBe(true);
+    expect(validation.issues).not.toContain('sandbox_credentials_missing');
+    expect(JSON.stringify({ secretStatus, validation })).not.toContain('fake-key-not-returned');
+  });
+
+  it('defines sandbox resilience and payload limit contracts without network behavior', () => {
+    const valid = validateProviderResilienceConfig(defaultProviderResilienceConfig);
+    const invalid = validateProviderResilienceConfig({
+      ...defaultProviderResilienceConfig,
+      timeoutMs: 1,
+      maxProviderPayloadBytes: 10,
+    });
+
+    expect(valid.valid).toBe(true);
+    expect(invalid.valid).toBe(false);
+    expect(invalid.issues).toEqual(expect.arrayContaining([
+      'sandbox_timeout_invalid',
+      'sandbox_payload_limit_invalid',
+    ]));
   });
 
   it('validates current mock provider config', () => {
@@ -532,7 +658,7 @@ describe('admin fiscal invoice processing', () => {
       requiredFieldCount: 0,
       optionalFieldCount: 0,
     });
-    expect(JSON.stringify(resolved)).not.toMatch(/secret|password|apiKey|token|certificateReference/i);
+    expect(JSON.stringify(resolved)).not.toMatch(/credential-value|token-value|password-value|real-secret/i);
   });
 
   it('evaluates mock provider readiness and disabled providers', async () => {
@@ -617,8 +743,89 @@ describe('admin fiscal invoice processing', () => {
       environment: 'mock',
     });
     expect(JSON.stringify({ config: config.body, environment: environment.body, readiness: readiness.body }))
-      .not.toMatch(/secret|password|apiKey|token|certificateReference|xml|pdf|uuid|timbre/i);
+      .not.toMatch(/credential-value|token-value|password-value|real-secret|xml|pdf|uuid|timbre/i);
     expect(await ProviderTrace.countDocuments()).toBe(tracesBefore);
+  });
+
+  it('protects sandbox PAC readiness endpoints with auth and admin role', async () => {
+    const adminToken = await authToken('admin');
+    const superToken = await authToken('super');
+    const userToken = await authToken('user');
+
+    const noAuth = await request(app).get('/admin/fiscal/providers/sandbox-pac/config');
+    const user = await request(app)
+      .get('/admin/fiscal/providers/sandbox-pac/readiness')
+      .set('Authorization', bearer(userToken));
+    const admin = await request(app)
+      .get('/admin/fiscal/providers/sandbox-pac/secrets-status')
+      .set('Authorization', bearer(adminToken));
+    const superRes = await request(app)
+      .get('/admin/fiscal/providers/sandbox-pac/config')
+      .set('Authorization', bearer(superToken));
+
+    expect(noAuth.status).toBe(401);
+    expect(user.status).toBe(403);
+    expect(admin.status).toBe(200);
+    expect(superRes.status).toBe(200);
+  });
+
+  it('returns sandbox PAC config readiness and secrets status without exposing secret values', async () => {
+    await withEnv({
+      FISCAL_PROVIDER_SANDBOX_ENABLED: 'true',
+      FISCAL_PROVIDER_SANDBOX_API_URL: 'https://sandbox.invalid',
+      FISCAL_PROVIDER_SANDBOX_TIMEOUT_MS: '12000',
+      FISCAL_PROVIDER_SANDBOX_API_KEY: 'fake-key-not-returned',
+      FISCAL_PROVIDER_SANDBOX_PASSWORD: 'fake-password-not-returned',
+    }, async () => {
+      const token = await authToken('admin');
+      const tracesBefore = await ProviderTrace.countDocuments();
+
+      const config = await request(app)
+        .get('/admin/fiscal/providers/sandbox-pac/config')
+        .set('Authorization', bearer(token));
+      const readiness = await request(app)
+        .get('/admin/fiscal/providers/sandbox-pac/readiness')
+        .set('Authorization', bearer(token));
+      const secrets = await request(app)
+        .get('/admin/fiscal/providers/sandbox-pac/secrets-status')
+        .set('Authorization', bearer(token));
+
+      expect(config.status).toBe(200);
+      expect(config.body).toMatchObject({
+        provider: 'sandbox-pac',
+        enabled: true,
+        environment: 'sandbox',
+        hasApiUrl: true,
+        timeoutConfigured: true,
+      });
+      expect(config.body.configuration.safeConfig).toMatchObject({
+        provider: 'sandbox-pac',
+        hasApiUrl: true,
+      });
+      expect(config.body.configuration.safeConfig).not.toHaveProperty('apiUrl');
+      expect(readiness.status).toBe(200);
+      expect(readiness.body).toMatchObject({
+        provider: 'sandbox-pac',
+        enabled: true,
+        hasCredentials: true,
+        hasApiUrl: true,
+      });
+      expect(readiness.body.readiness.issues).toEqual(expect.arrayContaining([
+        'provider_disabled',
+        'sandbox_provider_not_resolvable',
+      ]));
+      expect(readiness.body.readiness.issues).not.toContain('sandbox_api_url_missing');
+      expect(readiness.body.readiness.issues).not.toContain('sandbox_credentials_missing');
+      expect(secrets.status).toBe(200);
+      expect(secrets.body.secretsStatus).toMatchObject({
+        hasApiKey: true,
+        hasPassword: true,
+        hasCredentials: true,
+      });
+      expect(JSON.stringify({ config: config.body, readiness: readiness.body, secrets: secrets.body }))
+        .not.toMatch(/fake-key-not-returned|fake-password-not-returned|https:\/\/sandbox\.invalid|xml|pdf|uuid|timbre/i);
+      expect(await ProviderTrace.countDocuments()).toBe(tracesBefore);
+    });
   });
 
   it('compiles the PAC adapter contract with MockPacAdapter', () => {

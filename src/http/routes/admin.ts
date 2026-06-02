@@ -12,6 +12,7 @@ import {
   resolveProviderConfiguration,
 } from '../../domain/fiscalProviders/providerConfiguration.resolver';
 import { validateFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.validation';
+import { resolveProviderSecretStatus, toSafeProviderSecretStatus } from '../../domain/fiscalProviders/providerSecret.resolver';
 import {
   checkFiscalProviderHealth,
   getFiscalProviderCapabilities,
@@ -114,6 +115,14 @@ function invoiceAuditFilter(refs: {
   };
 }
 
+function getSandboxPacConfig() {
+  return getFiscalProviderConfig({
+    ...process.env,
+    FISCAL_PROVIDER: 'sandbox-pac',
+    FISCAL_PROVIDER_ENVIRONMENT: 'sandbox',
+  });
+}
+
 // Solo admin y super
 router.get('/ping', requireAuth, requireRole('admin', 'super'), (_req, res) => {
   res.json({ ok: true, area: 'admin', ts: new Date().toISOString() });
@@ -177,6 +186,46 @@ router.get('/fiscal/providers/current/config-validation', requireAuth, requireRo
   res.json({
     config: toSafeFiscalProviderConfig(config),
     validation: validateFiscalProviderConfig(config),
+  });
+});
+
+router.get('/fiscal/providers/sandbox-pac/config', requireAuth, requireRole('admin', 'super'), (_req, res) => {
+  const config = getSandboxPacConfig();
+  const configuration = resolveProviderConfiguration(config);
+
+  res.json({
+    provider: 'sandbox-pac',
+    enabled: config.enabled,
+    environment: config.environment,
+    hasApiUrl: Boolean(config.apiUrl),
+    timeoutConfigured: Number.isFinite(config.timeoutMs),
+    configuration,
+  });
+});
+
+router.get('/fiscal/providers/sandbox-pac/readiness', requireAuth, requireRole('admin', 'super'), async (_req, res) => {
+  const config = getSandboxPacConfig();
+  const secretsStatus = resolveProviderSecretStatus(process.env, config);
+
+  res.json({
+    provider: 'sandbox-pac',
+    enabled: config.enabled,
+    environment: config.environment,
+    hasCredentials: secretsStatus.hasCredentials,
+    hasApiUrl: Boolean(config.apiUrl),
+    timeoutConfigured: Number.isFinite(config.timeoutMs),
+    readiness: await evaluateProviderReadiness(config),
+  });
+});
+
+router.get('/fiscal/providers/sandbox-pac/secrets-status', requireAuth, requireRole('admin', 'super'), (_req, res) => {
+  const config = getSandboxPacConfig();
+  const secretsStatus = resolveProviderSecretStatus(process.env, config);
+
+  res.json({
+    provider: 'sandbox-pac',
+    environment: config.environment,
+    secretsStatus: toSafeProviderSecretStatus(secretsStatus),
   });
 });
 
