@@ -3,6 +3,8 @@ import { requireAuth } from '../middlewares/auth';
 import { requireRole } from '../middlewares/requireRole';
 import { AuctionResultStatus, AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { Audit } from '../../domain/audit/audit.model';
+import { buildCfdiRequest } from '../../domain/cfdi/cfdiRequest.builder';
+import { validateCfdiRequest } from '../../domain/cfdi/cfdiValidator.service';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { getFiscalProviderConfig, toSafeFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
 import { listFiscalProviders, resolveFiscalProvider } from '../../domain/fiscalProviders/fiscalProvider.registry';
@@ -117,6 +119,36 @@ router.get('/fiscal/providers/current', requireAuth, requireRole('admin', 'super
     provider: resolved.provider.name,
     config: toSafeFiscalProviderConfig(config),
   });
+});
+
+router.get('/fiscal/invoice-records/:id/cfdi-preview', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid invoice record id' });
+  }
+
+  const invoiceRecord = await InvoiceRecord.findById(id);
+  if (!invoiceRecord) return res.status(404).json({ error: 'Not found' });
+
+  const [transaction, fiscalSnapshot, invoiceDraft] = await Promise.all([
+    Transaction.findById(invoiceRecord.transactionId),
+    FiscalSnapshot.findOne({ transactionId: invoiceRecord.transactionId }),
+    InvoiceDraft.findById(invoiceRecord.invoiceDraftId),
+  ]);
+
+  if (!transaction) return res.status(404).json({ error: 'Transaction not found' });
+  if (!fiscalSnapshot) return res.status(404).json({ error: 'Fiscal snapshot not found' });
+  if (!invoiceDraft) return res.status(404).json({ error: 'Invoice draft not found' });
+
+  const cfdiRequest = buildCfdiRequest({
+    transaction,
+    fiscalSnapshot,
+    invoiceDraft,
+    invoiceRecord,
+  });
+  const validation = validateCfdiRequest(cfdiRequest);
+
+  res.json({ cfdiRequest, validation });
 });
 
 router.get('/fiscal/analytics/processing', requireAuth, requireRole('admin', 'super'), async (_req, res) => {
