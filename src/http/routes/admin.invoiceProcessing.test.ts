@@ -6,6 +6,13 @@ import { Audit } from '../../domain/audit/audit.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { getFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
 import { validateFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.validation';
+import {
+  evaluateProviderReadiness,
+  resolveProviderConfiguration,
+} from '../../domain/fiscalProviders/providerConfiguration.resolver';
+import { getProviderCredentialContract } from '../../domain/fiscalProviders/providerCredentials.types';
+import { normalizeProviderEnvironment } from '../../domain/fiscalProviders/providerEnvironment';
+import { validateProviderSecretStructure } from '../../domain/fiscalProviders/providerSecret.validation';
 import { PacAdapter } from '../../domain/fiscalProviders/pacAdapter.interface';
 import { mapPacError } from '../../domain/fiscalProviders/pacError.mapper';
 import {
@@ -344,6 +351,151 @@ describe('admin fiscal invoice processing', () => {
       .set('Authorization', bearer(token));
 
     expect(JSON.stringify({ capabilities: capabilities.body, health: health.body })).not.toMatch(/xml|pdf|uuid|timbre/i);
+  });
+
+  it('normalizes provider environment without connecting real environments', () => {
+    expect(normalizeProviderEnvironment('mock')).toBe('local');
+    expect(normalizeProviderEnvironment('local')).toBe('local');
+    expect(normalizeProviderEnvironment('sandbox')).toBe('sandbox');
+    expect(normalizeProviderEnvironment('production')).toBe('production');
+    expect(normalizeProviderEnvironment('unexpected')).toBeNull();
+  });
+
+  it('defines credential contracts without storing credential values', () => {
+    const mockContract = getProviderCredentialContract('mock', 'mock');
+    const futureContract = getProviderCredentialContract('future-pac-1', 'sandbox');
+
+    expect(mockContract.requiredFields).toEqual([]);
+    expect(mockContract.optionalFields).toEqual([]);
+    expect(futureContract.requiredFields).toEqual(expect.arrayContaining(['apiKey', 'certificateReference']));
+    expect(JSON.stringify({ mockContract, futureContract })).not.toMatch(/real|credential-value|token-value/i);
+  });
+
+  it('validates provider secret structure without reading real secrets', () => {
+    const mockValidation = validateProviderSecretStructure(getFiscalProviderConfig({}));
+    const invalidMockValidation = validateProviderSecretStructure(getFiscalProviderConfig({}), { apiKey: true });
+    const futureValidation = validateProviderSecretStructure({
+      ...getFiscalProviderConfig({}),
+      provider: 'future-pac-1',
+      environment: 'sandbox',
+      sandbox: true,
+    });
+
+    expect(mockValidation.valid).toBe(true);
+    expect(invalidMockValidation.valid).toBe(false);
+    expect(invalidMockValidation.issues).toContain('mock_provider_must_not_receive_credentials');
+    expect(futureValidation.valid).toBe(false);
+    expect(futureValidation.issues).toEqual(expect.arrayContaining(['missing_apiKey', 'missing_certificateReference']));
+  });
+
+  it('resolves current provider configuration safely', () => {
+    const resolved = resolveProviderConfiguration(getFiscalProviderConfig({}));
+
+    expect(resolved).toMatchObject({
+      provider: 'mock',
+      environment: 'mock',
+      normalizedEnvironment: 'local',
+      enabled: true,
+    });
+    expect(resolved.capabilities).toMatchObject({ issueInvoice: true });
+    expect(resolved.environmentRules).toMatchObject({
+      environment: 'local',
+      allowsExternalCalls: false,
+      allowsRealCredentials: false,
+    });
+    expect(resolved.credentialContract).toEqual({
+      provider: 'mock',
+      environment: 'mock',
+      requiredFieldCount: 0,
+      optionalFieldCount: 0,
+    });
+    expect(JSON.stringify(resolved)).not.toMatch(/secret|password|apiKey|token|certificateReference/i);
+  });
+
+  it('evaluates mock provider readiness and disabled providers', async () => {
+    const mockReadiness = await evaluateProviderReadiness(getFiscalProviderConfig({}));
+    const disabledReadiness = await evaluateProviderReadiness({
+      ...getFiscalProviderConfig({}),
+      provider: 'future-pac-1',
+      environment: 'sandbox',
+      sandbox: true,
+    });
+
+    expect(mockReadiness).toEqual({
+      ready: true,
+      issues: [],
+      provider: 'mock',
+      environment: 'mock',
+    });
+    expect(disabledReadiness.ready).toBe(false);
+    expect(disabledReadiness.issues).toEqual(expect.arrayContaining([
+      'provider_disabled',
+      'provider_health_disabled',
+      'missing_apiKey',
+      'missing_certificateReference',
+    ]));
+  });
+
+  it('protects provider configuration lifecycle endpoints with auth and admin role', async () => {
+    const adminToken = await authToken('admin');
+    const userToken = await authToken('user');
+
+    const noAuthConfig = await request(app).get('/admin/fiscal/providers/current/config');
+    const userEnvironment = await request(app)
+      .get('/admin/fiscal/providers/current/environment')
+      .set('Authorization', bearer(userToken));
+    const userReadiness = await request(app)
+      .get('/admin/fiscal/providers/current/readiness')
+      .set('Authorization', bearer(userToken));
+    const adminConfig = await request(app)
+      .get('/admin/fiscal/providers/current/config')
+      .set('Authorization', bearer(adminToken));
+
+    expect(noAuthConfig.status).toBe(401);
+    expect(userEnvironment.status).toBe(403);
+    expect(userReadiness.status).toBe(403);
+    expect(adminConfig.status).toBe(200);
+  });
+
+  it('returns current provider configuration lifecycle through read-only endpoints', async () => {
+    const token = await authToken('super');
+    const tracesBefore = await ProviderTrace.countDocuments();
+
+    const config = await request(app)
+      .get('/admin/fiscal/providers/current/config')
+      .set('Authorization', bearer(token));
+    const environment = await request(app)
+      .get('/admin/fiscal/providers/current/environment')
+      .set('Authorization', bearer(token));
+    const readiness = await request(app)
+      .get('/admin/fiscal/providers/current/readiness')
+      .set('Authorization', bearer(token));
+
+    expect(config.status).toBe(200);
+    expect(config.body.configuration).toMatchObject({
+      provider: 'mock',
+      normalizedEnvironment: 'local',
+      enabled: true,
+    });
+    expect(environment.status).toBe(200);
+    expect(environment.body).toMatchObject({
+      provider: 'mock',
+      environment: 'mock',
+      normalizedEnvironment: 'local',
+      rules: {
+        allowsExternalCalls: false,
+        allowsRealCredentials: false,
+      },
+    });
+    expect(readiness.status).toBe(200);
+    expect(readiness.body.readiness).toMatchObject({
+      ready: true,
+      provider: 'mock',
+      environment: 'mock',
+    });
+    expect(JSON.stringify({ config: config.body, environment: environment.body, readiness: readiness.body }))
+      .not.toMatch(/secret|password|apiKey|token|certificateReference|xml|pdf|uuid|timbre/i);
+    expect(await ProviderTrace.countDocuments()).toBe(tracesBefore);
   });
 
   it('compiles the PAC adapter contract with MockPacAdapter', () => {

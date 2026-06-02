@@ -7,6 +7,10 @@ import { buildCfdiRequest } from '../../domain/cfdi/cfdiRequest.builder';
 import { validateCfdiRequest } from '../../domain/cfdi/cfdiValidator.service';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { getFiscalProviderConfig, toSafeFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
+import {
+  evaluateProviderReadiness,
+  resolveProviderConfiguration,
+} from '../../domain/fiscalProviders/providerConfiguration.resolver';
 import { validateFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.validation';
 import {
   checkFiscalProviderHealth,
@@ -128,6 +132,34 @@ router.get('/fiscal/providers/current', requireAuth, requireRole('admin', 'super
   res.json({
     provider: resolved.provider.name,
     config: toSafeFiscalProviderConfig(config),
+  });
+});
+
+router.get('/fiscal/providers/current/config', requireAuth, requireRole('admin', 'super'), (_req, res) => {
+  const config = getFiscalProviderConfig();
+
+  res.json({
+    configuration: resolveProviderConfiguration(config),
+  });
+});
+
+router.get('/fiscal/providers/current/environment', requireAuth, requireRole('admin', 'super'), (_req, res) => {
+  const config = getFiscalProviderConfig();
+  const configuration = resolveProviderConfiguration(config);
+
+  res.json({
+    provider: configuration.provider,
+    environment: configuration.environment,
+    normalizedEnvironment: configuration.normalizedEnvironment,
+    rules: configuration.environmentRules,
+  });
+});
+
+router.get('/fiscal/providers/current/readiness', requireAuth, requireRole('admin', 'super'), async (_req, res) => {
+  const config = getFiscalProviderConfig();
+
+  res.json({
+    readiness: await evaluateProviderReadiness(config),
   });
 });
 
