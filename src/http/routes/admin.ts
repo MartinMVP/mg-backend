@@ -8,6 +8,12 @@ import { validateCfdiRequest } from '../../domain/cfdi/cfdiValidator.service';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { getFiscalProviderConfig, toSafeFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
 import {
+  getFacturamaConnectivityHealth,
+  getFacturamaProviderConfigForDiagnostics,
+  testFacturamaConnectivity,
+} from '../../domain/fiscalProviders/facturamaConnectivity.service';
+import { toFacturamaHealthResult } from '../../domain/fiscalProviders/facturamaConnectivity.state';
+import {
   evaluateProviderReadiness,
   resolveProviderConfiguration,
 } from '../../domain/fiscalProviders/providerConfiguration.resolver';
@@ -133,6 +139,10 @@ function getSandboxPacConfig() {
     FISCAL_PROVIDER: 'sandbox-pac',
     FISCAL_PROVIDER_ENVIRONMENT: 'sandbox',
   });
+}
+
+function getFacturamaConfig() {
+  return getFacturamaProviderConfigForDiagnostics();
 }
 
 // Solo admin y super
@@ -293,6 +303,26 @@ router.get('/fiscal/providers/sandbox-pac/capabilities', requireAuth, requireRol
     externalConnectivity: capabilities.capabilities.externalConnectivity || 'not_tested',
     version: 'sandbox-skeleton-v1',
     readiness,
+  });
+});
+
+router.post('/fiscal/providers/facturama/test-connectivity', requireAuth, requireRole('admin', 'super'), async (_req, res) => {
+  const result = await testFacturamaConnectivity();
+
+  res.status(result.ok ? 200 : 409).json(result);
+});
+
+router.get('/fiscal/providers/facturama/health', requireAuth, requireRole('admin', 'super'), (_req, res) => {
+  const config = getFacturamaConfig();
+  const snapshot = getFacturamaConnectivityHealth();
+
+  res.json({
+    ...toFacturamaHealthResult(config.environment),
+    provider: 'facturama',
+    enabled: config.enabled,
+    environment: config.environment,
+    externalConnectivity: snapshot.status,
+    httpStatus: snapshot.httpStatus,
   });
 });
 

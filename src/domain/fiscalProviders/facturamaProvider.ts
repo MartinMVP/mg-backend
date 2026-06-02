@@ -9,6 +9,7 @@ import {
 import { FiscalProviderConfig } from './fiscalProvider.config';
 import { facturamaProviderCapabilities } from './providerCapabilities';
 import { ProviderHealthResult } from './providerHealth';
+import { toFacturamaHealthResult } from './facturamaConnectivity.state';
 
 type FacturamaProviderOptions = {
   config: FiscalProviderConfig;
@@ -59,14 +60,19 @@ export class FacturamaProvider implements FiscalProvider {
   }
 
   async checkHealth(environment = this.options.config.environment): Promise<ProviderHealthResult> {
-    return {
-      ok: false,
-      provider: this.name,
-      environment,
-      status: 'disabled',
-      message: this.message('facturama_not_configured'),
-      checkedAt: new Date(),
-    };
+    if (!this.options.config.enabled || this.readinessIssues.length > 0) {
+      return {
+        ok: false,
+        provider: this.name,
+        environment,
+        status: 'disabled',
+        externalConnectivity: 'not_tested',
+        message: this.message('facturama_not_configured'),
+        checkedAt: new Date(),
+      };
+    }
+
+    return toFacturamaHealthResult(environment);
   }
 
   private message(fallback: string) {

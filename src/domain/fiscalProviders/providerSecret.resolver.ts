@@ -14,6 +14,12 @@ export type ProviderSecretStatus = {
   credentialShape: ProviderCredentialShape;
 };
 
+export type FacturamaSecretValues = {
+  username?: string;
+  password?: string;
+  apiKey?: string;
+};
+
 function hasValue(value: string | undefined) {
   return Boolean(value?.trim());
 }
@@ -61,5 +67,13 @@ export function toSafeProviderSecretStatus(status: ProviderSecretStatus) {
     hasCertificateRef: status.hasCertificateRef,
     hasUsernamePassword: status.hasUsernamePassword,
     hasCredentials: status.hasCredentials,
+  };
+}
+
+export function resolveFacturamaSecretValues(source: NodeJS.ProcessEnv = process.env): FacturamaSecretValues {
+  return {
+    username: source.FACTURAMA_USERNAME?.trim() || undefined,
+    password: source.FACTURAMA_PASSWORD?.trim() || undefined,
+    apiKey: source.FACTURAMA_API_KEY?.trim() || undefined,
   };
 }
