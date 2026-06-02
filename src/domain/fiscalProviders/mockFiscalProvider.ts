@@ -5,6 +5,7 @@ import {
   FiscalProviderIssueResult,
   FiscalProviderValidationResult,
 } from './fiscalProvider.interface';
+import { mockProviderCapabilities } from './providerCapabilities';
 
 type MockFiscalProviderOptions = {
   validationShouldFail?: boolean;
@@ -14,6 +15,7 @@ type MockFiscalProviderOptions = {
 
 export class MockFiscalProvider implements FiscalProvider {
   name = 'mock';
+  capabilities = mockProviderCapabilities;
 
   constructor(private readonly options: MockFiscalProviderOptions = {}) {}
 
@@ -72,6 +74,17 @@ export class MockFiscalProvider implements FiscalProvider {
       providerStatus: 'mock_status_available',
       providerMessage: 'Mock invoice status available',
       providerReference: `mock-${String(input.invoiceQueueId)}`,
+    };
+  }
+
+  async checkHealth(environment = 'mock') {
+    return {
+      ok: true,
+      provider: this.name,
+      environment,
+      status: 'healthy' as const,
+      message: 'Mock fiscal provider healthy',
+      checkedAt: new Date(),
     };
   }
 }

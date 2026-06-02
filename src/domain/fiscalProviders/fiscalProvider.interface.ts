@@ -1,5 +1,7 @@
 import { Types } from 'mongoose';
 import { CfdiRequest } from '../cfdi/cfdi.types';
+import { ProviderCapabilities } from './providerCapabilities';
+import { ProviderHealthResult } from './providerHealth';
 import { ProviderInvoiceRequest } from './providerInvoice.types';
 
 export type FiscalProviderInput = {
@@ -41,8 +43,10 @@ export type FiscalProviderStatusResult = {
 
 export interface FiscalProvider {
   name: string;
+  capabilities: ProviderCapabilities;
   validateInvoiceInput(input: FiscalProviderInput): Promise<FiscalProviderValidationResult>;
   issueInvoice(input: FiscalProviderInput): Promise<FiscalProviderIssueResult>;
   cancelInvoice(input: FiscalProviderInput): Promise<FiscalProviderCancelResult>;
   getInvoiceStatus(input: FiscalProviderInput): Promise<FiscalProviderStatusResult>;
+  checkHealth(environment?: string): Promise<ProviderHealthResult>;
 }

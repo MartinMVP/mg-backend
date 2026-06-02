@@ -5,7 +5,13 @@ import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { Audit } from '../../domain/audit/audit.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { getFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
-import { listFiscalProviders, resolveFiscalProvider } from '../../domain/fiscalProviders/fiscalProvider.registry';
+import { validateFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.validation';
+import {
+  checkFiscalProviderHealth,
+  getFiscalProviderCapabilities,
+  listFiscalProviders,
+  resolveFiscalProvider,
+} from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
 import { ProviderTrace } from '../../domain/fiscalProviders/providerTrace.model';
 import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
@@ -178,6 +184,163 @@ describe('admin fiscal invoice processing', () => {
     expect(providers.map((provider) => provider.name)).toEqual(
       expect.arrayContaining(['mock', 'future-pac-1', 'future-pac-2'])
     );
+  });
+
+  it('exposes mock provider capabilities without real external integration', () => {
+    const capabilities = getFiscalProviderCapabilities('mock');
+
+    expect(capabilities).toMatchObject({
+      provider: 'mock',
+      enabled: true,
+      capabilities: {
+        validateInvoiceInput: true,
+        issueInvoice: true,
+        cancelInvoice: true,
+        getInvoiceStatus: true,
+        sandboxSupported: true,
+        productionSupported: false,
+        traceSupported: true,
+        retrySupported: true,
+      },
+    });
+  });
+
+  it('keeps future providers disabled in capabilities', () => {
+    const capabilities = getFiscalProviderCapabilities('future-pac-1');
+
+    expect(capabilities).toMatchObject({
+      provider: 'future-pac-1',
+      enabled: false,
+      capabilities: {
+        issueInvoice: false,
+        cancelInvoice: false,
+        traceSupported: false,
+      },
+    });
+  });
+
+  it('returns mock provider health as healthy without external calls', async () => {
+    const health = await checkFiscalProviderHealth('mock', getFiscalProviderConfig({}));
+
+    expect(health).toMatchObject({
+      ok: true,
+      provider: 'mock',
+      environment: 'mock',
+      status: 'healthy',
+    });
+    expect(health?.checkedAt).toBeInstanceOf(Date);
+  });
+
+  it('returns disabled health for future provider', async () => {
+    const health = await checkFiscalProviderHealth('future-pac-1', {
+      ...getFiscalProviderConfig({}),
+      provider: 'future-pac-1',
+    });
+
+    expect(health).toMatchObject({
+      ok: false,
+      provider: 'future-pac-1',
+      status: 'disabled',
+    });
+  });
+
+  it('validates current mock provider config', () => {
+    const validation = validateFiscalProviderConfig(getFiscalProviderConfig({}));
+
+    expect(validation).toEqual({
+      valid: true,
+      issues: [],
+      provider: 'mock',
+      environment: 'mock',
+    });
+  });
+
+  it('fails config validation for disabled provider', () => {
+    const validation = validateFiscalProviderConfig({
+      ...getFiscalProviderConfig({}),
+      provider: 'future-pac-1',
+      environment: 'sandbox',
+      sandbox: true,
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.issues).toContain('provider_disabled');
+  });
+
+  it('protects provider readiness endpoints with auth and admin role', async () => {
+    const adminToken = await authToken('admin');
+    const userToken = await authToken('user');
+
+    const noAuthCapabilities = await request(app).get('/admin/fiscal/providers/mock/capabilities');
+    const userCapabilities = await request(app)
+      .get('/admin/fiscal/providers/mock/capabilities')
+      .set('Authorization', bearer(userToken));
+    const adminCapabilities = await request(app)
+      .get('/admin/fiscal/providers/mock/capabilities')
+      .set('Authorization', bearer(adminToken));
+    const userHealth = await request(app)
+      .get('/admin/fiscal/providers/current/health')
+      .set('Authorization', bearer(userToken));
+    const userValidation = await request(app)
+      .get('/admin/fiscal/providers/current/config-validation')
+      .set('Authorization', bearer(userToken));
+
+    expect(noAuthCapabilities.status).toBe(401);
+    expect(userCapabilities.status).toBe(403);
+    expect(userHealth.status).toBe(403);
+    expect(userValidation.status).toBe(403);
+    expect(adminCapabilities.status).toBe(200);
+  });
+
+  it('returns current provider health and config validation through read-only endpoints', async () => {
+    const token = await authToken('super');
+
+    const health = await request(app)
+      .get('/admin/fiscal/providers/current/health')
+      .set('Authorization', bearer(token));
+    const validation = await request(app)
+      .get('/admin/fiscal/providers/current/config-validation')
+      .set('Authorization', bearer(token));
+    const disabledHealth = await request(app)
+      .get('/admin/fiscal/providers/future-pac-1/health')
+      .set('Authorization', bearer(token));
+
+    expect(health.status).toBe(200);
+    expect(health.body).toMatchObject({ ok: true, provider: 'mock', status: 'healthy' });
+    expect(validation.status).toBe(200);
+    expect(validation.body.validation).toMatchObject({ valid: true, provider: 'mock' });
+    expect(JSON.stringify(validation.body)).not.toMatch(/secret|token|password/i);
+    expect(disabledHealth.status).toBe(200);
+    expect(disabledHealth.body).toMatchObject({ ok: false, provider: 'future-pac-1', status: 'disabled' });
+  });
+
+  it('does not create ProviderTrace on provider readiness endpoints', async () => {
+    const token = await authToken('admin');
+
+    await request(app)
+      .get('/admin/fiscal/providers/mock/capabilities')
+      .set('Authorization', bearer(token));
+    await request(app)
+      .get('/admin/fiscal/providers/mock/health')
+      .set('Authorization', bearer(token));
+    await request(app)
+      .get('/admin/fiscal/providers/current/config-validation')
+      .set('Authorization', bearer(token));
+
+    expect(await ProviderTrace.countDocuments()).toBe(0);
+  });
+
+  it('does not expose XML PDF or UUID in provider readiness endpoints', async () => {
+    const token = await authToken('admin');
+
+    const capabilities = await request(app)
+      .get('/admin/fiscal/providers/mock/capabilities')
+      .set('Authorization', bearer(token));
+    const health = await request(app)
+      .get('/admin/fiscal/providers/current/health')
+      .set('Authorization', bearer(token));
+
+    expect(JSON.stringify({ capabilities: capabilities.body, health: health.body })).not.toMatch(/xml|pdf|uuid|timbre/i);
   });
 
   it('allows admin to process next queued invoice operation', async () => {

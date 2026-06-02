@@ -7,7 +7,13 @@ import { buildCfdiRequest } from '../../domain/cfdi/cfdiRequest.builder';
 import { validateCfdiRequest } from '../../domain/cfdi/cfdiValidator.service';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { getFiscalProviderConfig, toSafeFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
-import { listFiscalProviders, resolveFiscalProvider } from '../../domain/fiscalProviders/fiscalProvider.registry';
+import { validateFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.validation';
+import {
+  checkFiscalProviderHealth,
+  getFiscalProviderCapabilities,
+  listFiscalProviders,
+  resolveFiscalProvider,
+} from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { mapCfdiToProviderInvoiceRequest } from '../../domain/fiscalProviders/providerInvoice.mapper';
 import { ProviderTrace, ProviderTraceOperation, ProviderTraceStatus } from '../../domain/fiscalProviders/providerTrace.model';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
@@ -123,6 +129,39 @@ router.get('/fiscal/providers/current', requireAuth, requireRole('admin', 'super
     provider: resolved.provider.name,
     config: toSafeFiscalProviderConfig(config),
   });
+});
+
+router.get('/fiscal/providers/current/health', requireAuth, requireRole('admin', 'super'), async (_req, res) => {
+  const config = getFiscalProviderConfig();
+  const health = await checkFiscalProviderHealth(config.provider, config);
+  if (!health) return res.status(404).json({ error: 'Provider not found' });
+
+  res.json(health);
+});
+
+router.get('/fiscal/providers/current/config-validation', requireAuth, requireRole('admin', 'super'), (_req, res) => {
+  const config = getFiscalProviderConfig();
+
+  res.json({
+    config: toSafeFiscalProviderConfig(config),
+    validation: validateFiscalProviderConfig(config),
+  });
+});
+
+router.get('/fiscal/providers/:provider/capabilities', requireAuth, requireRole('admin', 'super'), (req, res) => {
+  const capabilities = getFiscalProviderCapabilities(String(req.params.provider));
+  if (!capabilities) return res.status(404).json({ error: 'Provider not found' });
+
+  res.json(capabilities);
+});
+
+router.get('/fiscal/providers/:provider/health', requireAuth, requireRole('admin', 'super'), async (req, res) => {
+  const baseConfig = getFiscalProviderConfig();
+  const provider = String(req.params.provider);
+  const health = await checkFiscalProviderHealth(provider, { ...baseConfig, provider });
+  if (!health) return res.status(404).json({ error: 'Provider not found' });
+
+  res.json(health);
 });
 
 router.get('/fiscal/provider-traces', requireAuth, requireRole('admin', 'super'), async (req, res) => {
@@ -848,22 +887,31 @@ router.post('/fiscal/transactions/:id/queue', requireAuth, requireRole('admin', 
     return res.status(409).json({ error: 'Transaction already has an issued invoice record' });
   }
 
-  const queue = await InvoiceQueue.findOneAndUpdate(
-    {
+  let queue;
+  try {
+    queue = await InvoiceQueue.findOneAndUpdate(
+      {
+        transactionId: transaction._id,
+        status: { $in: ['queued', 'processing'] },
+      },
+      {
+        $setOnInsert: {
+          transactionId: transaction._id,
+          invoiceDraftId: invoiceDraft._id,
+          fiscalSnapshotId: fiscalSnapshot._id,
+          status: 'queued',
+          queuedAt: new Date(),
+        },
+      },
+      { new: true, upsert: true, runValidators: true }
+    );
+  } catch (error: any) {
+    if (error?.code !== 11000) throw error;
+    queue = await InvoiceQueue.findOne({
       transactionId: transaction._id,
       status: { $in: ['queued', 'processing'] },
-    },
-    {
-      $setOnInsert: {
-        transactionId: transaction._id,
-        invoiceDraftId: invoiceDraft._id,
-        fiscalSnapshotId: fiscalSnapshot._id,
-        status: 'queued',
-        queuedAt: new Date(),
-      },
-    },
-    { new: true, upsert: true, runValidators: true }
-  );
+    });
+  }
 
   res.json(queue);
 });
