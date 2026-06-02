@@ -16,6 +16,17 @@ function bool(v: any, def = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(v).toLowerCase());
 }
 
+function pickAllowed(source: any, allowed: string[]) {
+  const output: Record<string, unknown> = {};
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(source || {}, key)) {
+      output[key] = source[key];
+    }
+  }
+
+  return output;
+}
+
 // ---------- Animals ----------
 export async function listAnimals(req: Request, res: Response) {
   const {
@@ -100,7 +111,20 @@ export async function updateAnimal(req: Request, res: Response) {
   const canEdit = isOwner || ['admin', 'super'].includes(user.role);
   if (!canEdit) return res.status(403).json({ error: 'Forbidden' });
 
-  Object.assign(doc, req.body);
+  const updates = pickAllowed(req.body, [
+    'name',
+    'breed',
+    'sex',
+    'birthDate',
+    'registry',
+    'registryId',
+    'pedigreeUrl',
+    'weightKg',
+    'location',
+    'isActive',
+  ]);
+
+  Object.assign(doc, updates);
   await doc.save();
 
   await Audit.create({
@@ -184,7 +208,18 @@ export async function createListing(req: Request, res: Response) {
   const user = (req as any).user;
   if (!user?.sub) return res.status(401).json({ message: 'No autenticado' });
 
-  const payload = { ...req.body, seller: user.sub };
+  const animalId = req.body?.animal;
+  if (!Types.ObjectId.isValid(String(animalId))) {
+    return res.status(400).json({ error: 'Invalid animal id' });
+  }
+
+  const animal = await Animal.findById(animalId).select('owner deletedAt');
+  if (!animal || animal.deletedAt) return res.status(404).json({ error: 'Animal not found' });
+
+  const canUseAnimal = String(animal.owner) === user.sub || ['admin', 'super'].includes(user.role);
+  if (!canUseAnimal) return res.status(403).json({ error: 'Forbidden' });
+
+  const payload = { ...req.body, seller: user.sub, animal: animal._id };
   const doc = await Listing.create(payload);
 
   await Audit.create({
@@ -208,7 +243,16 @@ export async function updateListing(req: Request, res: Response) {
   const canEdit = isOwner || ['admin', 'super'].includes(user.role);
   if (!canEdit) return res.status(403).json({ error: 'Forbidden' });
 
-  Object.assign(doc, req.body);
+  const updates = pickAllowed(req.body, [
+    'price',
+    'currency',
+    'isNegotiable',
+    'featured',
+    'status',
+    'media',
+  ]);
+
+  Object.assign(doc, updates);
   await doc.save();
 
   await Audit.create({
