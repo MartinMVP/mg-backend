@@ -8,7 +8,10 @@ import { validateCfdiRequest } from '../../domain/cfdi/cfdiValidator.service';
 import { FiscalProfile } from '../../domain/fiscalProfiles/fiscalProfile.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import * as providerRegistry from '../../domain/fiscalProviders/fiscalProvider.registry';
+import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
+import { mapCfdiToProviderInvoiceRequest } from '../../domain/fiscalProviders/providerInvoice.mapper';
 import { InvoiceDraft } from '../../domain/invoiceDrafts/invoiceDraft.model';
+import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
 import { InvoiceQueue } from '../../domain/invoiceQueue/invoiceQueue.model';
 import { InvoiceRecord } from '../../domain/invoiceRecords/invoiceRecord.model';
 import { Transaction } from '../../domain/transactions/transaction.model';
@@ -326,6 +329,63 @@ describe('CFDI domain preparation', () => {
     expect(result.issues).toContain('same_issuer_receiver_rfc');
   });
 
+  it('maps issuer into provider invoice request', () => {
+    const cfdiRequest = validCfdiRequest();
+    const providerRequest = mapCfdiToProviderInvoiceRequest(cfdiRequest);
+
+    expect(providerRequest.issuer).toEqual({
+      rfc: cfdiRequest.issuer.rfc,
+      name: cfdiRequest.issuer.name,
+      fiscalRegime: cfdiRequest.issuer.regimenFiscal,
+      postalCode: cfdiRequest.issuer.postalCode,
+    });
+  });
+
+  it('maps receiver into provider invoice request', () => {
+    const cfdiRequest = validCfdiRequest();
+    const providerRequest = mapCfdiToProviderInvoiceRequest(cfdiRequest);
+
+    expect(providerRequest.receiver).toEqual({
+      rfc: cfdiRequest.receiver.rfc,
+      name: cfdiRequest.receiver.name,
+      fiscalRegime: cfdiRequest.receiver.regimenFiscal,
+      postalCode: cfdiRequest.receiver.postalCode,
+      invoiceUse: cfdiRequest.receiver.usoCFDI,
+    });
+  });
+
+  it('maps concepts into provider invoice request', () => {
+    const cfdiRequest = validCfdiRequest();
+    const providerRequest = mapCfdiToProviderInvoiceRequest(cfdiRequest);
+
+    expect(providerRequest.concepts).toEqual(cfdiRequest.concepts);
+  });
+
+  it('maps totals into provider invoice request', () => {
+    const cfdiRequest = validCfdiRequest();
+    const providerRequest = mapCfdiToProviderInvoiceRequest(cfdiRequest);
+
+    expect(providerRequest.totals).toEqual({
+      subtotal: cfdiRequest.totals.subtotal,
+      taxes: cfdiRequest.totals.taxes,
+      total: cfdiRequest.totals.total,
+      currency: cfdiRequest.totals.currency,
+    });
+  });
+
+  it('preserves transactionId and invoiceRecordId in provider invoice request', () => {
+    const cfdiRequest = validCfdiRequest();
+    const providerRequest = mapCfdiToProviderInvoiceRequest(cfdiRequest);
+
+    expect(providerRequest.transactionId).toBe(cfdiRequest.transactionId);
+    expect(providerRequest.invoiceRecordId).toBe(cfdiRequest.invoiceRecordId);
+    expect(providerRequest.metadata).toMatchObject({
+      source: 'internal_cfdi_request',
+      transactionId: cfdiRequest.transactionId,
+      invoiceRecordId: cfdiRequest.invoiceRecordId,
+    });
+  });
+
   it('builds the CFDI request from FiscalSnapshot, not live FiscalProfile', async () => {
     const { seller, buyer, transaction, snapshot, draft, record } = await createInvoiceRecordFixture();
     await FiscalProfile.create({
@@ -424,5 +484,97 @@ describe('CFDI domain preparation', () => {
     expect(res.body.cfdiRequest).not.toHaveProperty('pdf');
     expect(res.body.cfdiRequest).not.toHaveProperty('uuid');
     expect(res.body.cfdiRequest).not.toHaveProperty('timbreFiscal');
+  });
+
+  it('returns 401 without auth on provider preview', async () => {
+    const { record } = await createInvoiceRecordFixture();
+
+    const res = await request(app).get(`/admin/fiscal/invoice-records/${record._id}/provider-preview`);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 for role user on provider preview', async () => {
+    const token = await authToken('user');
+    const { record } = await createInvoiceRecordFixture();
+
+    const res = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/provider-preview`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(403);
+  });
+
+  it('returns provider preview for admin without calling provider', async () => {
+    const token = await authToken('admin');
+    const { record } = await createInvoiceRecordFixture();
+    const resolveSpy = vi.spyOn(providerRegistry, 'resolveFiscalProvider');
+
+    const res = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/provider-preview`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.validation).toEqual({ valid: true, issues: [] });
+    expect(res.body.providerInvoiceRequest.issuer.name).toBe('Vendedor Snapshot');
+    expect(res.body.providerInvoiceRequest.receiver.name).toBe('Comprador Snapshot');
+    expect(res.body.providerInvoiceRequest.metadata.source).toBe('internal_cfdi_request');
+    expect(resolveSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not modify InvoiceRecord on provider preview', async () => {
+    const token = await authToken('super');
+    const { record } = await createInvoiceRecordFixture();
+    const before = await InvoiceRecord.findById(record._id).lean();
+
+    const res = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/provider-preview`)
+      .set('Authorization', bearer(token));
+    const after = await InvoiceRecord.findById(record._id).lean();
+
+    expect(res.status).toBe(200);
+    expect(after).toEqual(before);
+  });
+
+  it('does not expose XML, PDF or fiscal UUID fields in provider preview', async () => {
+    const token = await authToken('admin');
+    const { record } = await createInvoiceRecordFixture();
+
+    const res = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/provider-preview`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.providerInvoiceRequest).not.toHaveProperty('xml');
+    expect(res.body.providerInvoiceRequest).not.toHaveProperty('pdf');
+    expect(res.body.providerInvoiceRequest).not.toHaveProperty('uuid');
+    expect(res.body.providerInvoiceRequest).not.toHaveProperty('timbreFiscal');
+  });
+
+  it('keeps MockFiscalProvider compatible with provider invoice request input', async () => {
+    const cfdiRequest = validCfdiRequest();
+    const providerInvoiceRequest = mapCfdiToProviderInvoiceRequest(cfdiRequest);
+    const provider = new MockFiscalProvider();
+
+    const validation = await provider.validateInvoiceInput({
+      transactionId: cfdiRequest.transactionId,
+      invoiceDraftId: new Types.ObjectId(),
+      invoiceQueueId: new Types.ObjectId(),
+      cfdiRequest,
+      providerInvoiceRequest,
+    });
+
+    expect(validation).toEqual({ ok: true, message: 'Mock validation successful' });
+  });
+
+  it('keeps InvoiceProcessor working with the provider abstraction', async () => {
+    const { queue } = await createInvoiceRecordFixture();
+    await InvoiceQueue.findByIdAndUpdate(queue._id, { $set: { status: 'queued' } }, { runValidators: true });
+
+    const result = await processInvoiceQueue({ invoiceQueueId: queue._id });
+
+    expect(result.ok).toBe(true);
+    expect(result.invoiceQueue?.status).toBe('completed');
+    expect(result.invoiceRecord?.status).toBe('completed');
   });
 });

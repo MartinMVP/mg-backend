@@ -1,11 +1,13 @@
 import { Types } from 'mongoose';
 import { CfdiRequest } from '../cfdi/cfdi.types';
+import { ProviderInvoiceRequest } from './providerInvoice.types';
 
 export type FiscalProviderInput = {
   transactionId: Types.ObjectId;
   invoiceDraftId: Types.ObjectId;
   invoiceQueueId: Types.ObjectId;
   cfdiRequest?: CfdiRequest;
+  providerInvoiceRequest?: ProviderInvoiceRequest;
 };
 
 export type FiscalProviderValidationResult = {
