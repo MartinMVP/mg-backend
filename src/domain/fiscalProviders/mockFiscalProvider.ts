@@ -5,19 +5,29 @@ import {
   FiscalProviderIssueResult,
   FiscalProviderValidationResult,
 } from './fiscalProvider.interface';
+import { PacAdapter } from './pacAdapter.interface';
+import { MockPacAdapter } from './mockPacAdapter';
 import { mockProviderCapabilities } from './providerCapabilities';
 
 type MockFiscalProviderOptions = {
   validationShouldFail?: boolean;
   issueShouldFail?: boolean;
   cancelShouldFail?: boolean;
+  pacAdapter?: PacAdapter;
 };
 
 export class MockFiscalProvider implements FiscalProvider {
   name = 'mock';
   capabilities = mockProviderCapabilities;
 
-  constructor(private readonly options: MockFiscalProviderOptions = {}) {}
+  private readonly pacAdapter: PacAdapter;
+
+  constructor(private readonly options: MockFiscalProviderOptions = {}) {
+    this.pacAdapter = options.pacAdapter || new MockPacAdapter({
+      issueShouldFail: options.issueShouldFail,
+      cancelShouldFail: options.cancelShouldFail,
+    });
+  }
 
   async validateInvoiceInput(_input: FiscalProviderInput): Promise<FiscalProviderValidationResult> {
     if (this.options.validationShouldFail) {
@@ -28,52 +38,50 @@ export class MockFiscalProvider implements FiscalProvider {
   }
 
   async issueInvoice(input: FiscalProviderInput): Promise<FiscalProviderIssueResult> {
-    const simulatedExternalId = `mock-${String(input.invoiceQueueId)}`;
-
-    if (this.options.issueShouldFail) {
-      return {
-        ok: false,
-        providerStatus: 'failed',
-        providerMessage: 'Mock invoice issue failed',
-        providerRequestId: `mock-req-${String(input.invoiceQueueId)}`,
-      };
-    }
-
+    const result = await this.pacAdapter.issue({
+      providerInvoiceRequest: input.providerInvoiceRequest,
+      transactionId: String(input.transactionId),
+      invoiceDraftId: String(input.invoiceDraftId),
+      invoiceQueueId: String(input.invoiceQueueId),
+    });
     return {
-      ok: true,
-      providerStatus: 'issued',
-      providerMessage: 'Mock invoice issued',
-      providerReference: simulatedExternalId,
-      providerRequestId: `mock-req-${String(input.invoiceQueueId)}`,
-      simulatedExternalId,
+      ok: result.ok,
+      providerStatus: result.providerStatus,
+      providerMessage: result.message,
+      providerReference: result.providerReference,
+      providerRequestId: result.providerRequestId,
+      simulatedExternalId: result.simulatedExternalId,
     };
   }
 
   async cancelInvoice(input: FiscalProviderInput): Promise<FiscalProviderCancelResult> {
-    if (this.options.cancelShouldFail) {
-      return {
-        ok: false,
-        providerStatus: 'failed',
-        providerMessage: 'Mock cancellation failed',
-        providerRequestId: `mock-cancel-${String(input.invoiceQueueId)}`,
-      };
-    }
-
-    return {
-      ok: true,
-      providerStatus: 'cancelled',
-      providerMessage: 'Mock cancellation successful',
+    const result = await this.pacAdapter.cancel({
+      transactionId: String(input.transactionId),
+      invoiceDraftId: String(input.invoiceDraftId),
+      invoiceQueueId: String(input.invoiceQueueId),
       providerReference: `mock-${String(input.invoiceQueueId)}`,
-      providerRequestId: `mock-cancel-${String(input.invoiceQueueId)}`,
+    });
+    return {
+      ok: result.ok,
+      providerStatus: result.providerStatus,
+      providerMessage: result.message,
+      providerReference: result.providerReference,
+      providerRequestId: result.providerRequestId,
     };
   }
 
   async getInvoiceStatus(input: FiscalProviderInput) {
-    return {
-      ok: true,
-      providerStatus: 'mock_status_available',
-      providerMessage: 'Mock invoice status available',
+    const result = await this.pacAdapter.getStatus({
+      transactionId: String(input.transactionId),
+      invoiceQueueId: String(input.invoiceQueueId),
       providerReference: `mock-${String(input.invoiceQueueId)}`,
+    });
+
+    return {
+      ok: result.ok,
+      providerStatus: result.providerStatus,
+      providerMessage: result.message,
+      providerReference: result.providerReference,
     };
   }
 

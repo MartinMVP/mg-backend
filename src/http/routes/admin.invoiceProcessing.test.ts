@@ -6,12 +6,15 @@ import { Audit } from '../../domain/audit/audit.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { getFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
 import { validateFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.validation';
+import { PacAdapter } from '../../domain/fiscalProviders/pacAdapter.interface';
+import { mapPacError } from '../../domain/fiscalProviders/pacError.mapper';
 import {
   checkFiscalProviderHealth,
   getFiscalProviderCapabilities,
   listFiscalProviders,
   resolveFiscalProvider,
 } from '../../domain/fiscalProviders/fiscalProvider.registry';
+import { MockPacAdapter } from '../../domain/fiscalProviders/mockPacAdapter';
 import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
 import { ProviderTrace } from '../../domain/fiscalProviders/providerTrace.model';
 import { processInvoiceQueue } from '../../domain/invoiceProcessing/invoiceProcessor.service';
@@ -341,6 +344,126 @@ describe('admin fiscal invoice processing', () => {
       .set('Authorization', bearer(token));
 
     expect(JSON.stringify({ capabilities: capabilities.body, health: health.body })).not.toMatch(/xml|pdf|uuid|timbre/i);
+  });
+
+  it('compiles the PAC adapter contract with MockPacAdapter', () => {
+    const adapter: PacAdapter = new MockPacAdapter();
+
+    expect(adapter.name).toBe('mock-pac-adapter');
+    expect(typeof adapter.issue).toBe('function');
+    expect(typeof adapter.cancel).toBe('function');
+    expect(typeof adapter.getStatus).toBe('function');
+  });
+
+  it('mock PAC adapter issues successfully without XML PDF or fiscal UUID', async () => {
+    const adapter = new MockPacAdapter();
+    const result = await adapter.issue({
+      transactionId: 'transaction-id',
+      invoiceDraftId: 'draft-id',
+      invoiceQueueId: 'queue-id',
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      providerStatus: 'issued',
+      message: 'Mock invoice issued',
+      providerReference: 'mock-queue-id',
+      providerRequestId: 'mock-req-queue-id',
+      simulatedExternalId: 'mock-queue-id',
+    });
+    expect(JSON.stringify(result)).not.toMatch(/xml|pdf|uuid|timbre|sello|certificado/i);
+  });
+
+  it('mock PAC adapter reports issue failure', async () => {
+    const adapter = new MockPacAdapter({ issueShouldFail: true });
+    const result = await adapter.issue({
+      transactionId: 'transaction-id',
+      invoiceDraftId: 'draft-id',
+      invoiceQueueId: 'queue-id',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      providerStatus: 'failed',
+      message: 'Mock invoice issue failed',
+      providerRequestId: 'mock-req-queue-id',
+      error: {
+        code: 'PAC_VALIDATION_ERROR',
+        retryable: false,
+      },
+    });
+  });
+
+  it('mock PAC adapter cancels successfully and reports cancellation failure', async () => {
+    const success = await new MockPacAdapter().cancel({
+      transactionId: 'transaction-id',
+      invoiceDraftId: 'draft-id',
+      invoiceQueueId: 'queue-id',
+      providerReference: 'mock-reference',
+    });
+    const failure = await new MockPacAdapter({ cancelShouldFail: true }).cancel({
+      transactionId: 'transaction-id',
+      invoiceDraftId: 'draft-id',
+      invoiceQueueId: 'queue-id',
+      providerReference: 'mock-reference',
+    });
+
+    expect(success).toMatchObject({
+      ok: true,
+      providerStatus: 'cancelled',
+      message: 'Mock cancellation successful',
+      providerReference: 'mock-reference',
+    });
+    expect(failure).toMatchObject({
+      ok: false,
+      providerStatus: 'failed',
+      message: 'Mock cancellation failed',
+      error: { code: 'PAC_VALIDATION_ERROR', retryable: false },
+    });
+  });
+
+  it('mock PAC adapter returns simulated status', async () => {
+    const result = await new MockPacAdapter().getStatus({
+      transactionId: 'transaction-id',
+      invoiceQueueId: 'queue-id',
+      providerReference: 'mock-reference',
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      providerStatus: 'mock_status_available',
+      message: 'Mock invoice status available',
+      providerReference: 'mock-reference',
+    });
+  });
+
+  it('maps PAC errors into retryable and non-retryable internal errors', () => {
+    expect(mapPacError('PAC_TIMEOUT')).toMatchObject({
+      code: 'PAC_TIMEOUT',
+      retryable: true,
+    });
+    expect(mapPacError('PAC_AUTH_ERROR')).toMatchObject({
+      code: 'PAC_AUTH_ERROR',
+      retryable: false,
+    });
+  });
+
+  it('MockFiscalProvider delegates invoice issuing to MockPacAdapter', async () => {
+    const provider = new MockFiscalProvider({ pacAdapter: new MockPacAdapter() });
+    const result = await provider.issueInvoice({
+      transactionId: new Types.ObjectId(),
+      invoiceDraftId: new Types.ObjectId(),
+      invoiceQueueId: new Types.ObjectId('64f000000000000000000001'),
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      providerStatus: 'issued',
+      providerMessage: 'Mock invoice issued',
+      providerReference: 'mock-64f000000000000000000001',
+      providerRequestId: 'mock-req-64f000000000000000000001',
+      simulatedExternalId: 'mock-64f000000000000000000001',
+    });
   });
 
   it('allows admin to process next queued invoice operation', async () => {
