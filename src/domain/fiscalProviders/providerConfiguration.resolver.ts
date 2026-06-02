@@ -56,11 +56,15 @@ export function resolveProviderConfiguration(
     maxProviderPayloadBytes: config.maxProviderPayloadBytes,
   };
 
+  const enabled = config.provider === 'sandbox-pac'
+    ? config.enabled
+    : config.enabled && Boolean(descriptor?.enabled);
+
   return {
     provider: config.provider,
     environment: config.environment,
     normalizedEnvironment: environmentRules?.environment || null,
-    enabled: config.enabled && Boolean(descriptor?.enabled),
+    enabled,
     safeConfig: toSafeFiscalProviderConfig(config),
     capabilities: descriptor?.capabilities || null,
     environmentRules,
@@ -82,7 +86,7 @@ export async function evaluateProviderReadiness(
 
   if (!descriptor) {
     issues.push('provider_not_registered');
-  } else if (!descriptor.enabled) {
+  } else if (!descriptor.enabled && config.provider !== 'sandbox-pac') {
     issues.push('provider_disabled');
   }
 
@@ -100,9 +104,6 @@ export async function evaluateProviderReadiness(
 
   if (descriptor && !hasFiscalProviderFactory(config.provider)) {
     issues.push('provider_not_resolvable');
-    if (config.provider === 'sandbox-pac') {
-      issues.push('sandbox_provider_not_resolvable');
-    }
   }
 
   issues.push(...resolved.configValidation.issues);

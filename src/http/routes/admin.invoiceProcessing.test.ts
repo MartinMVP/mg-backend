@@ -32,12 +32,15 @@ import { mapPacError } from '../../domain/fiscalProviders/pacError.mapper';
 import {
   checkFiscalProviderHealth,
   getFiscalProviderCapabilities,
+  hasFiscalProviderFactory,
   listFiscalProviders,
   resolveFiscalProvider,
 } from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { MockPacAdapter } from '../../domain/fiscalProviders/mockPacAdapter';
 import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
 import { SandboxPacAdapter } from '../../domain/fiscalProviders/sandboxPacAdapter';
+import { SandboxFiscalProvider } from '../../domain/fiscalProviders/sandboxFiscalProvider';
+import { SandboxHttpClientStub } from '../../domain/fiscalProviders/sandboxHttpClient.stub';
 import { ProviderTrace } from '../../domain/fiscalProviders/providerTrace.model';
 import {
   sanitizeProviderPayloadForStorage,
@@ -321,30 +324,25 @@ describe('admin fiscal invoice processing', () => {
     });
   });
 
-  it('does not resolve sandbox PAC while it is disabled and has no factory', () => {
+  it('registers sandbox PAC factory but does not resolve it while disabled', () => {
+    expect(hasFiscalProviderFactory('sandbox-pac')).toBe(true);
     expect(() => resolveFiscalProvider({
-      ...getFiscalProviderConfig({}),
-      provider: 'sandbox-pac',
-      environment: 'sandbox',
-      sandbox: true,
-    })).toThrow('Unsupported fiscal provider: sandbox-pac');
+      ...getFiscalProviderConfig({
+        FISCAL_PROVIDER: 'sandbox-pac',
+        FISCAL_PROVIDER_ENVIRONMENT: 'sandbox',
+      }),
+    })).toThrow('Fiscal provider is disabled: sandbox-pac');
   });
 
   it('returns clear sandbox readiness issues without exposing secrets', async () => {
-    const readiness = await evaluateProviderReadiness({
-      ...getFiscalProviderConfig({}),
-      provider: 'sandbox-pac',
-      environment: 'sandbox',
-      sandbox: true,
-      apiUrl: null,
-      timeoutMs: 10_000,
-    });
+    const readiness = await evaluateProviderReadiness(getFiscalProviderConfig({
+      FISCAL_PROVIDER: 'sandbox-pac',
+      FISCAL_PROVIDER_ENVIRONMENT: 'sandbox',
+    }));
 
     expect(readiness.ready).toBe(false);
     expect(readiness.issues).toEqual(expect.arrayContaining([
-      'provider_disabled',
-      'provider_not_resolvable',
-      'sandbox_provider_not_resolvable',
+      'provider_config_disabled',
       'provider_health_disabled',
       'missing_sandbox_api_url',
       'sandbox_api_url_missing',
@@ -442,8 +440,7 @@ describe('admin fiscal invoice processing', () => {
     expect(readiness.issues).toEqual(expect.arrayContaining([
       'sandbox_api_url_missing',
       'missing_sandbox_api_url',
-      'provider_disabled',
-      'sandbox_provider_not_resolvable',
+      'provider_health_disabled',
     ]));
     expect(JSON.stringify(readiness)).not.toMatch(/present|secret|password|token/i);
   });
@@ -484,6 +481,93 @@ describe('admin fiscal invoice processing', () => {
     expect(validation.valid).toBe(true);
     expect(validation.issues).not.toContain('sandbox_credentials_missing');
     expect(JSON.stringify({ secretStatus, validation })).not.toContain('fake-key-not-returned');
+  });
+
+  it('resolves sandbox fiscal provider only when sandbox config and secret flags are ready', async () => {
+    await withEnv({
+      FISCAL_PROVIDER_SANDBOX_API_KEY: 'fake-key-not-returned',
+    }, async () => {
+      const config = getFiscalProviderConfig({
+        FISCAL_PROVIDER: 'sandbox-pac',
+        FISCAL_PROVIDER_ENVIRONMENT: 'sandbox',
+        FISCAL_PROVIDER_ENABLED: 'true',
+        FISCAL_PROVIDER_SANDBOX_ENABLED: 'true',
+        FISCAL_PROVIDER_SANDBOX_API_URL: 'https://sandbox.invalid',
+        FISCAL_PROVIDER_SANDBOX_API_KEY: 'fake-key-not-returned',
+      });
+      const readiness = await evaluateProviderReadiness(config);
+      const resolved = resolveFiscalProvider(config);
+
+      expect(readiness).toEqual({
+        ready: true,
+        issues: [],
+        provider: 'sandbox-pac',
+        environment: 'sandbox',
+      });
+      expect(resolved.provider).toBeInstanceOf(SandboxFiscalProvider);
+      expect(resolved.provider.name).toBe('sandbox-pac');
+      expect(resolved.safeConfig).toMatchObject({
+        provider: 'sandbox-pac',
+        enabled: true,
+        hasApiUrl: true,
+      });
+      expect(JSON.stringify(resolved.safeConfig)).not.toContain('https://sandbox.invalid');
+      expect(JSON.stringify(resolved.safeConfig)).not.toContain('fake-key-not-returned');
+    });
+  });
+
+  it('sandbox fiscal provider returns controlled non-timbrado responses when ready', async () => {
+    const config = getFiscalProviderConfig({
+      FISCAL_PROVIDER: 'sandbox-pac',
+      FISCAL_PROVIDER_ENVIRONMENT: 'sandbox',
+      FISCAL_PROVIDER_ENABLED: 'true',
+      FISCAL_PROVIDER_SANDBOX_ENABLED: 'true',
+      FISCAL_PROVIDER_SANDBOX_API_URL: 'https://sandbox.invalid',
+      FISCAL_PROVIDER_SANDBOX_API_KEY: 'fake-key-not-returned',
+    });
+    const provider = new SandboxFiscalProvider({ config });
+    const ids = {
+      transactionId: new Types.ObjectId(),
+      invoiceDraftId: new Types.ObjectId(),
+      invoiceQueueId: new Types.ObjectId(),
+      idempotencyKey: 'sandbox:test',
+    };
+
+    const validation = await provider.validateInvoiceInput(ids);
+    const issue = await provider.issueInvoice(ids);
+    const cancel = await provider.cancelInvoice(ids);
+    const status = await provider.getInvoiceStatus(ids);
+    const serialized = JSON.stringify({ validation, issue, cancel, status });
+
+    expect(validation).toMatchObject({
+      ok: false,
+      message: 'sandbox_not_enabled_for_real_fiscal_operations',
+    });
+    expect(issue).toMatchObject({
+      ok: false,
+      providerStatus: 'failed',
+      providerRequestId: 'sandbox:test',
+    });
+    expect(cancel).toMatchObject({
+      ok: false,
+      providerStatus: 'failed',
+      providerRequestId: 'sandbox:test',
+    });
+    expect(status.ok).toBe(false);
+    expect(serialized).not.toMatch(/xml|pdf|uuid|timbre|sello|certificado/i);
+  });
+
+  it('sandbox HTTP client stub implements contract without network behavior', async () => {
+    const client = new SandboxHttpClientStub();
+    const post = await client.post('/issue', { safe: true });
+    const get = await client.get('/status');
+
+    expect(post).toEqual({
+      ok: false,
+      status: 503,
+      message: 'Sandbox HTTP client is a local stub and performs no external calls',
+    });
+    expect(get).toEqual(post);
   });
 
   it('defines sandbox resilience and payload limit contracts without network behavior', () => {
@@ -774,17 +858,21 @@ describe('admin fiscal invoice processing', () => {
     const admin = await request(app)
       .get('/admin/fiscal/providers/sandbox-pac/secrets-status')
       .set('Authorization', bearer(adminToken));
+    const userStatus = await request(app)
+      .get('/admin/fiscal/providers/sandbox-pac/status')
+      .set('Authorization', bearer(userToken));
     const superRes = await request(app)
-      .get('/admin/fiscal/providers/sandbox-pac/config')
+      .get('/admin/fiscal/providers/sandbox-pac/capabilities')
       .set('Authorization', bearer(superToken));
 
     expect(noAuth.status).toBe(401);
     expect(user.status).toBe(403);
+    expect(userStatus.status).toBe(403);
     expect(admin.status).toBe(200);
     expect(superRes.status).toBe(200);
   });
 
-  it('returns sandbox PAC config readiness and secrets status without exposing secret values', async () => {
+  it('returns sandbox PAC config readiness status capabilities and secrets without exposing secret values', async () => {
     await withEnv({
       FISCAL_PROVIDER_SANDBOX_ENABLED: 'true',
       FISCAL_PROVIDER_SANDBOX_API_URL: 'https://sandbox.invalid',
@@ -803,6 +891,12 @@ describe('admin fiscal invoice processing', () => {
         .set('Authorization', bearer(token));
       const secrets = await request(app)
         .get('/admin/fiscal/providers/sandbox-pac/secrets-status')
+        .set('Authorization', bearer(token));
+      const status = await request(app)
+        .get('/admin/fiscal/providers/sandbox-pac/status')
+        .set('Authorization', bearer(token));
+      const capabilities = await request(app)
+        .get('/admin/fiscal/providers/sandbox-pac/capabilities')
         .set('Authorization', bearer(token));
 
       expect(config.status).toBe(200);
@@ -825,10 +919,10 @@ describe('admin fiscal invoice processing', () => {
         hasCredentials: true,
         hasApiUrl: true,
       });
-      expect(readiness.body.readiness.issues).toEqual(expect.arrayContaining([
-        'provider_disabled',
-        'sandbox_provider_not_resolvable',
-      ]));
+      expect(readiness.body.readiness).toMatchObject({
+        ready: true,
+        issues: [],
+      });
       expect(readiness.body.readiness.issues).not.toContain('sandbox_api_url_missing');
       expect(readiness.body.readiness.issues).not.toContain('sandbox_credentials_missing');
       expect(secrets.status).toBe(200);
@@ -837,7 +931,36 @@ describe('admin fiscal invoice processing', () => {
         hasPassword: true,
         hasCredentials: true,
       });
-      expect(JSON.stringify({ config: config.body, readiness: readiness.body, secrets: secrets.body }))
+      expect(status.status).toBe(200);
+      expect(status.body).toMatchObject({
+        provider: 'sandbox-pac',
+        version: 'sandbox-skeleton-v1',
+        enabled: true,
+        environment: 'sandbox',
+        externalConnectivity: 'not_tested',
+        readiness: { ready: true, issues: [] },
+      });
+      expect(capabilities.status).toBe(200);
+      expect(capabilities.body).toMatchObject({
+        provider: 'sandbox-pac',
+        enabled: true,
+        environment: 'sandbox',
+        externalConnectivity: 'not_tested',
+        version: 'sandbox-skeleton-v1',
+        readiness: { ready: true, issues: [] },
+      });
+      expect(capabilities.body.capabilities).toMatchObject({
+        externalConnectivity: 'not_tested',
+        issueInvoice: true,
+        cancelInvoice: true,
+      });
+      expect(JSON.stringify({
+        config: config.body,
+        readiness: readiness.body,
+        secrets: secrets.body,
+        status: status.body,
+        capabilities: capabilities.body,
+      }))
         .not.toMatch(/fake-key-not-returned|fake-password-not-returned|https:\/\/sandbox\.invalid|xml|pdf|uuid|timbre/i);
       expect(await ProviderTrace.countDocuments()).toBe(tracesBefore);
     });

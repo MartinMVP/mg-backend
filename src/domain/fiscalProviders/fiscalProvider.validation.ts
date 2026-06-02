@@ -18,7 +18,7 @@ export function validateFiscalProviderConfig(config: FiscalProviderConfig): Fisc
 
   if (!descriptor) {
     issues.push('provider_not_registered');
-  } else if (!descriptor.enabled) {
+  } else if (!descriptor.enabled && config.provider !== 'sandbox-pac') {
     issues.push('provider_disabled');
   }
 

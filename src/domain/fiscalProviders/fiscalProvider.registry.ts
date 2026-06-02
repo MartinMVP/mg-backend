@@ -5,6 +5,7 @@ import {
   toSafeFiscalProviderConfig,
 } from './fiscalProvider.config';
 import { mockFiscalProvider } from './mockFiscalProvider';
+import { SandboxFiscalProvider } from './sandboxFiscalProvider';
 import {
   disabledFutureProviderCapabilities,
   mockProviderCapabilities,
@@ -12,6 +13,7 @@ import {
   sandboxPacProviderCapabilities,
 } from './providerCapabilities';
 import { ProviderHealthResult } from './providerHealth';
+import { resolveProviderSecretStatus } from './providerSecret.resolver';
 
 export type FiscalProviderDescriptor = {
   name: string;
@@ -21,8 +23,28 @@ export type FiscalProviderDescriptor = {
   capabilities: ProviderCapabilities;
 };
 
-const providerFactories: Record<string, () => FiscalProvider> = {
+type ProviderFactory = (config: FiscalProviderConfig) => FiscalProvider;
+
+function getSandboxPacReadinessIssues(config: FiscalProviderConfig) {
+  const issues: string[] = [];
+  const secrets = resolveProviderSecretStatus(process.env, config);
+
+  if (config.provider !== 'sandbox-pac') issues.push('invalid_provider');
+  if (!config.enabled) issues.push('provider_config_disabled');
+  if (config.environment !== 'sandbox') issues.push('sandbox_environment_invalid');
+  if (!config.sandbox) issues.push('sandbox_flag_required');
+  if (!config.apiUrl) issues.push('missing_sandbox_api_url');
+  if (!secrets.hasCredentials) issues.push('sandbox_credentials_missing');
+
+  return [...new Set(issues)];
+}
+
+const providerFactories: Record<string, ProviderFactory> = {
   mock: () => mockFiscalProvider,
+  'sandbox-pac': (config) => new SandboxFiscalProvider({
+    config,
+    readinessIssues: getSandboxPacReadinessIssues(config),
+  }),
 };
 
 const providerCatalog: FiscalProviderDescriptor[] = [
@@ -86,7 +108,11 @@ export async function checkFiscalProviderHealth(
   const descriptor = findFiscalProviderDescriptor(providerName);
   if (!descriptor) return null;
 
-  if (!descriptor.enabled || !config.enabled) {
+  const enabled = providerName === 'sandbox-pac'
+    ? config.enabled
+    : descriptor.enabled && config.enabled;
+
+  if (!enabled) {
     return {
       ok: false,
       provider: descriptor.name,
@@ -109,7 +135,7 @@ export async function checkFiscalProviderHealth(
     };
   }
 
-  return factory().checkHealth(config.environment);
+  return factory(config).checkHealth(config.environment);
 }
 
 export function resolveFiscalProvider(config: FiscalProviderConfig = getFiscalProviderConfig()) {
@@ -123,8 +149,15 @@ export function resolveFiscalProvider(config: FiscalProviderConfig = getFiscalPr
     throw new Error(`Unsupported fiscal provider: ${config.provider}`);
   }
 
+  if (config.provider === 'sandbox-pac') {
+    const issues = getSandboxPacReadinessIssues(config);
+    if (issues.length > 0) {
+      throw new Error(`Sandbox fiscal provider is not ready: ${issues.join(',')}`);
+    }
+  }
+
   return {
-    provider: factory(),
+    provider: factory(config),
     config,
     safeConfig: toSafeFiscalProviderConfig(config),
   };

@@ -20,6 +20,7 @@ import {
   resolveFiscalProvider,
 } from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { mapCfdiToProviderInvoiceRequest } from '../../domain/fiscalProviders/providerInvoice.mapper';
+import { SandboxFiscalProvider } from '../../domain/fiscalProviders/sandboxFiscalProvider';
 import {
   FiscalProviderCancelResult,
   FiscalProviderIssueResult,
@@ -265,6 +266,33 @@ router.get('/fiscal/providers/sandbox-pac/secrets-status', requireAuth, requireR
     provider: 'sandbox-pac',
     environment: config.environment,
     secretsStatus: toSafeProviderSecretStatus(secretsStatus),
+  });
+});
+
+router.get('/fiscal/providers/sandbox-pac/status', requireAuth, requireRole('admin', 'super'), async (_req, res) => {
+  const config = getSandboxPacConfig();
+  const readiness = await evaluateProviderReadiness(config);
+  const provider = new SandboxFiscalProvider({
+    config,
+    readinessIssues: readiness.issues,
+  });
+
+  res.json(provider.getStatus());
+});
+
+router.get('/fiscal/providers/sandbox-pac/capabilities', requireAuth, requireRole('admin', 'super'), async (_req, res) => {
+  const config = getSandboxPacConfig();
+  const readiness = await evaluateProviderReadiness(config);
+  const capabilities = getFiscalProviderCapabilities('sandbox-pac');
+  if (!capabilities) return res.status(404).json({ error: 'Provider not found' });
+
+  res.json({
+    ...capabilities,
+    enabled: config.enabled,
+    environment: config.environment,
+    externalConnectivity: capabilities.capabilities.externalConnectivity || 'not_tested',
+    version: 'sandbox-skeleton-v1',
+    readiness,
   });
 });
 
