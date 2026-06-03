@@ -4,11 +4,14 @@ import { Types } from 'mongoose';
 import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { buildCfdiRequest } from '../../domain/cfdi/cfdiRequest.builder';
 import { CfdiRequest } from '../../domain/cfdi/cfdi.types';
+import { analyzeFiscalRulesGap } from '../../domain/cfdi/fiscalRulesGap.service';
 import { validateCfdiRequest } from '../../domain/cfdi/cfdiValidator.service';
 import { FiscalProfile } from '../../domain/fiscalProfiles/fiscalProfile.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
+import { checkFacturamaContractCompliance } from '../../domain/fiscalProviders/facturamaContractCompliance.service';
 import { mapProviderInvoiceToFacturamaDraft } from '../../domain/fiscalProviders/facturamaInvoice.mapper';
 import { validateFacturamaDraft } from '../../domain/fiscalProviders/facturamaDraft.validator';
+import { ProviderTrace } from '../../domain/fiscalProviders/providerTrace.model';
 import * as providerRegistry from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
 import { mapCfdiToProviderInvoiceRequest } from '../../domain/fiscalProviders/providerInvoice.mapper';
@@ -454,6 +457,103 @@ describe('CFDI domain preparation', () => {
     expect(result.issues).toContain('forbidden_fiscal_artifact');
   });
 
+  it('returns warning contract compliance for a structurally complete Facturama draft', () => {
+    const providerRequest = mapCfdiToProviderInvoiceRequest(validCfdiRequest());
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+    const result = checkFacturamaContractCompliance(facturamaDraft);
+
+    expect(result.status).toBe('warning');
+    expect(result.issues).toEqual([]);
+    expect(result.warnings).toContain('formal_tax_breakdown_pending');
+  });
+
+  it('blocks contract compliance without receiver', () => {
+    const providerRequest = mapCfdiToProviderInvoiceRequest(validCfdiRequest());
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+    const result = checkFacturamaContractCompliance({
+      ...facturamaDraft,
+      receiver: undefined as any,
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.issues).toContain('receiver_missing');
+  });
+
+  it('blocks contract compliance without concepts', () => {
+    const providerRequest = mapCfdiToProviderInvoiceRequest(validCfdiRequest());
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+    const result = checkFacturamaContractCompliance({
+      ...facturamaDraft,
+      concepts: [],
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.issues).toContain('concepts_missing');
+  });
+
+  it('blocks contract compliance for incompatible fiscal artifact structure', () => {
+    const providerRequest = mapCfdiToProviderInvoiceRequest(validCfdiRequest());
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+    const result = checkFacturamaContractCompliance({
+      ...facturamaDraft,
+      metadata: {
+        ...facturamaDraft.metadata,
+        providerOperationId: 'uuid-not-allowed',
+      },
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.issues).toContain('forbidden_fiscal_artifact');
+  });
+
+  it('marks PF to PM operations as requiring fiscal review without calculating rates', () => {
+    const providerRequest = mapCfdiToProviderInvoiceRequest(validCfdiRequest({
+      issuer: { ...validCfdiRequest().issuer, rfc: 'COSC8001137NA' },
+      receiver: { ...validCfdiRequest().receiver, rfc: 'ABC010101ABC' },
+    }));
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+    const result = analyzeFiscalRulesGap({ draft: facturamaDraft, operationType: 'cattle_sale' });
+
+    expect(result.requiresFiscalReview).toBe(true);
+    expect(result.blockers).toContain('pf_to_pm_requires_fiscal_review');
+    expect(result.blockers).toContain('possible_isr_withholding_requires_review');
+    expect(result.blockers).toContain('possible_iva_withholding_requires_review');
+    expect(JSON.stringify(result)).not.toMatch(/0\.10|0\.106667|0\.16|10%|16%/);
+  });
+
+  it('marks PM to PF operations as requiring fiscal review', () => {
+    const cfdiRequest = validCfdiRequest({
+      issuer: { ...validCfdiRequest().issuer, rfc: 'ABC010101ABC' },
+      receiver: { ...validCfdiRequest().receiver, rfc: 'COSC8001137NA' },
+    });
+    const providerRequest = mapCfdiToProviderInvoiceRequest(cfdiRequest);
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+    const result = analyzeFiscalRulesGap({ draft: facturamaDraft, operationType: 'cattle_sale' });
+
+    expect(result.requiresFiscalReview).toBe(true);
+    expect(result.blockers).toContain('pm_to_pf_requires_fiscal_review');
+  });
+
+  it('marks service and commission operations as requiring fiscal review', () => {
+    const providerRequest = mapCfdiToProviderInvoiceRequest(validCfdiRequest());
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+    const result = analyzeFiscalRulesGap({ draft: facturamaDraft, operationType: 'platform_commission' });
+
+    expect(result.requiresFiscalReview).toBe(true);
+    expect(result.blockers).toContain('service_or_commission_requires_fiscal_review');
+    expect(result.blockers).toContain('commission_requires_fiscal_review');
+  });
+
+  it('keeps unresolved tax engine as warning and blocker', () => {
+    const providerRequest = mapCfdiToProviderInvoiceRequest(validCfdiRequest());
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+    const result = analyzeFiscalRulesGap({ draft: facturamaDraft, operationType: 'cattle_sale' });
+
+    expect(result.requiresFiscalReview).toBe(true);
+    expect(result.blockers).toContain('formal_tax_calculation_missing');
+    expect(result.warnings).toContain('tax_object_defined_without_formal_tax_engine');
+  });
+
   it('builds the CFDI request from FiscalSnapshot, not live FiscalProfile', async () => {
     const { seller, buyer, transaction, snapshot, draft, record } = await createInvoiceRecordFixture();
     await FiscalProfile.create({
@@ -653,21 +753,28 @@ describe('CFDI domain preparation', () => {
     expect(res.body.providerInvoiceRequest.receiver.invoiceUse).toBe('G03');
     expect(res.body.facturamaDraft.receiver.cfdiUse).toBe('G03');
     expect(res.body.facturamaDraft.metadata.compatibility).toBe('facturama_draft_preview_only');
+    expect(res.body.contractCompliance.status).toBe('warning');
+    expect(res.body.fiscalRulesGap.requiresFiscalReview).toBe(true);
+    expect(res.body.emissionBlocked).toBe(true);
+    expect(res.body.emissionBlockers).toContain('formal_tax_calculation_missing');
     expect(resolveSpy).not.toHaveBeenCalled();
   });
 
-  it('does not modify InvoiceRecord on Facturama preview', async () => {
+  it('does not modify InvoiceRecord or create ProviderTrace on Facturama preview', async () => {
     const token = await authToken('super');
     const { record } = await createInvoiceRecordFixture();
     const before = await InvoiceRecord.findById(record._id).lean();
+    const traceCountBefore = await ProviderTrace.countDocuments();
 
     const res = await request(app)
       .get(`/admin/fiscal/invoice-records/${record._id}/facturama-preview`)
       .set('Authorization', bearer(token));
     const after = await InvoiceRecord.findById(record._id).lean();
+    const traceCountAfter = await ProviderTrace.countDocuments();
 
     expect(res.status).toBe(200);
     expect(after).toEqual(before);
+    expect(traceCountAfter).toBe(traceCountBefore);
   });
 
   it('does not expose XML, PDF or fiscal UUID fields in Facturama preview', async () => {

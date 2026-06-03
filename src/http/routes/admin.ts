@@ -4,6 +4,7 @@ import { requireRole } from '../middlewares/requireRole';
 import { AuctionResultStatus, AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { Audit } from '../../domain/audit/audit.model';
 import { buildCfdiRequest } from '../../domain/cfdi/cfdiRequest.builder';
+import { analyzeFiscalRulesGap } from '../../domain/cfdi/fiscalRulesGap.service';
 import { validateCfdiRequest } from '../../domain/cfdi/cfdiValidator.service';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
 import { getFiscalProviderConfig, toSafeFiscalProviderConfig } from '../../domain/fiscalProviders/fiscalProvider.config';
@@ -27,6 +28,7 @@ import {
 } from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { mapCfdiToProviderInvoiceRequest } from '../../domain/fiscalProviders/providerInvoice.mapper';
 import { SandboxFiscalProvider } from '../../domain/fiscalProviders/sandboxFiscalProvider';
+import { checkFacturamaContractCompliance } from '../../domain/fiscalProviders/facturamaContractCompliance.service';
 import { mapProviderInvoiceToFacturamaDraft } from '../../domain/fiscalProviders/facturamaInvoice.mapper';
 import { validateFacturamaDraft } from '../../domain/fiscalProviders/facturamaDraft.validator';
 import {
@@ -476,12 +478,22 @@ router.get('/fiscal/invoice-records/:id/facturama-preview', requireAuth, require
   const providerInvoiceRequest = mapCfdiToProviderInvoiceRequest(cfdiRequest);
   const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerInvoiceRequest);
   const facturamaValidation = validateFacturamaDraft(facturamaDraft);
+  const contractCompliance = checkFacturamaContractCompliance(facturamaDraft);
+  const fiscalRulesGap = analyzeFiscalRulesGap({ draft: facturamaDraft, operationType: 'cattle_sale' });
+  const emissionBlockers = [
+    ...contractCompliance.issues,
+    ...fiscalRulesGap.blockers,
+  ];
 
   res.json({
     cfdiValidation,
     providerInvoiceRequest,
     facturamaDraft,
     facturamaValidation,
+    contractCompliance,
+    fiscalRulesGap,
+    emissionBlocked: contractCompliance.status === 'blocked' || fiscalRulesGap.requiresFiscalReview,
+    emissionBlockers: [...new Set(emissionBlockers)],
   });
 });
 
