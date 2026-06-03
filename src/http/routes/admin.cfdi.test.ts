@@ -7,6 +7,8 @@ import { CfdiRequest } from '../../domain/cfdi/cfdi.types';
 import { validateCfdiRequest } from '../../domain/cfdi/cfdiValidator.service';
 import { FiscalProfile } from '../../domain/fiscalProfiles/fiscalProfile.model';
 import { FiscalSnapshot } from '../../domain/fiscalSnapshots/fiscalSnapshot.model';
+import { mapProviderInvoiceToFacturamaDraft } from '../../domain/fiscalProviders/facturamaInvoice.mapper';
+import { validateFacturamaDraft } from '../../domain/fiscalProviders/facturamaDraft.validator';
 import * as providerRegistry from '../../domain/fiscalProviders/fiscalProvider.registry';
 import { MockFiscalProvider } from '../../domain/fiscalProviders/mockFiscalProvider';
 import { mapCfdiToProviderInvoiceRequest } from '../../domain/fiscalProviders/providerInvoice.mapper';
@@ -386,6 +388,72 @@ describe('CFDI domain preparation', () => {
     });
   });
 
+  it('maps provider invoice request into Facturama draft shape', () => {
+    const cfdiRequest = validCfdiRequest();
+    const providerRequest = mapCfdiToProviderInvoiceRequest(cfdiRequest);
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+
+    expect(facturamaDraft.issuer).toEqual(providerRequest.issuer);
+    expect(facturamaDraft.receiver).toEqual({
+      rfc: providerRequest.receiver.rfc,
+      name: providerRequest.receiver.name,
+      fiscalRegime: providerRequest.receiver.fiscalRegime,
+      postalCode: providerRequest.receiver.postalCode,
+      cfdiUse: providerRequest.receiver.invoiceUse,
+    });
+    expect(facturamaDraft.concepts[0]).toMatchObject({
+      productCode: providerRequest.concepts[0].productServiceKey,
+      unitCode: providerRequest.concepts[0].unitKey,
+      description: providerRequest.concepts[0].description,
+      amount: providerRequest.concepts[0].amount,
+    });
+    expect(facturamaDraft.totals).toEqual(providerRequest.totals);
+    expect(facturamaDraft.metadata).toMatchObject({
+      source: 'provider_invoice_request',
+      compatibility: 'facturama_draft_preview_only',
+      transactionId: providerRequest.transactionId,
+      invoiceRecordId: providerRequest.invoiceRecordId,
+    });
+  });
+
+  it('validates a complete Facturama draft preview', () => {
+    const providerRequest = mapCfdiToProviderInvoiceRequest(validCfdiRequest());
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+
+    expect(validateFacturamaDraft(facturamaDraft)).toEqual({ valid: true, issues: [] });
+  });
+
+  it('rejects incomplete Facturama draft preview data', () => {
+    const providerRequest = mapCfdiToProviderInvoiceRequest(validCfdiRequest());
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+    const result = validateFacturamaDraft({
+      ...facturamaDraft,
+      receiver: { ...facturamaDraft.receiver, cfdiUse: '' },
+      concepts: [{ ...facturamaDraft.concepts[0], productCode: '' }],
+      totals: { ...facturamaDraft.totals, total: 0 },
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('missing_cfdi_use');
+    expect(result.issues).toContain('missing_product_code');
+    expect(result.issues).toContain('invalid_total');
+  });
+
+  it('rejects Facturama draft preview payloads that contain fiscal artifacts', () => {
+    const providerRequest = mapCfdiToProviderInvoiceRequest(validCfdiRequest());
+    const facturamaDraft = mapProviderInvoiceToFacturamaDraft(providerRequest);
+    const result = validateFacturamaDraft({
+      ...facturamaDraft,
+      metadata: {
+        ...facturamaDraft.metadata,
+        providerOperationId: 'xml-content-not-allowed',
+      },
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('forbidden_fiscal_artifact');
+  });
+
   it('builds the CFDI request from FiscalSnapshot, not live FiscalProfile', async () => {
     const { seller, buyer, transaction, snapshot, draft, record } = await createInvoiceRecordFixture();
     await FiscalProfile.create({
@@ -549,6 +617,72 @@ describe('CFDI domain preparation', () => {
     expect(res.body.providerInvoiceRequest).not.toHaveProperty('pdf');
     expect(res.body.providerInvoiceRequest).not.toHaveProperty('uuid');
     expect(res.body.providerInvoiceRequest).not.toHaveProperty('timbreFiscal');
+  });
+
+  it('returns 401 without auth on Facturama preview', async () => {
+    const { record } = await createInvoiceRecordFixture();
+
+    const res = await request(app).get(`/admin/fiscal/invoice-records/${record._id}/facturama-preview`);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 for role user on Facturama preview', async () => {
+    const token = await authToken('user');
+    const { record } = await createInvoiceRecordFixture();
+
+    const res = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/facturama-preview`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(403);
+  });
+
+  it('returns Facturama draft preview for admin without calling provider', async () => {
+    const token = await authToken('admin');
+    const { record } = await createInvoiceRecordFixture();
+    const resolveSpy = vi.spyOn(providerRegistry, 'resolveFiscalProvider');
+
+    const res = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/facturama-preview`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.cfdiValidation).toEqual({ valid: true, issues: [] });
+    expect(res.body.facturamaValidation).toEqual({ valid: true, issues: [] });
+    expect(res.body.providerInvoiceRequest.receiver.invoiceUse).toBe('G03');
+    expect(res.body.facturamaDraft.receiver.cfdiUse).toBe('G03');
+    expect(res.body.facturamaDraft.metadata.compatibility).toBe('facturama_draft_preview_only');
+    expect(resolveSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not modify InvoiceRecord on Facturama preview', async () => {
+    const token = await authToken('super');
+    const { record } = await createInvoiceRecordFixture();
+    const before = await InvoiceRecord.findById(record._id).lean();
+
+    const res = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/facturama-preview`)
+      .set('Authorization', bearer(token));
+    const after = await InvoiceRecord.findById(record._id).lean();
+
+    expect(res.status).toBe(200);
+    expect(after).toEqual(before);
+  });
+
+  it('does not expose XML, PDF or fiscal UUID fields in Facturama preview', async () => {
+    const token = await authToken('admin');
+    const { record } = await createInvoiceRecordFixture();
+
+    const res = await request(app)
+      .get(`/admin/fiscal/invoice-records/${record._id}/facturama-preview`)
+      .set('Authorization', bearer(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.facturamaDraft).not.toHaveProperty('xml');
+    expect(res.body.facturamaDraft).not.toHaveProperty('pdf');
+    expect(res.body.facturamaDraft).not.toHaveProperty('uuid');
+    expect(res.body.facturamaDraft).not.toHaveProperty('timbreFiscal');
   });
 
   it('keeps MockFiscalProvider compatible with provider invoice request input', async () => {
