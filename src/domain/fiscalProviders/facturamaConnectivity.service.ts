@@ -117,7 +117,7 @@ export async function testFacturamaConnectivity(options: FacturamaConnectivityOp
       password: credentials.password,
       apiKey: credentials.apiKey,
     });
-  const path = options.path || process.env.FACTURAMA_CONNECTIVITY_PATH || '/';
+  const path = options.path || process.env.FACTURAMA_CONNECTIVITY_PATH || '/api/Account/UserInfo';
 
   try {
     const response = await traceProviderOperation(

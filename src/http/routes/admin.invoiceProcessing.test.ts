@@ -868,40 +868,50 @@ describe('admin fiscal invoice processing', () => {
   });
 
   it('keeps Facturama connectivity disabled by default and reports controlled endpoint health', async () => {
-    const token = await authToken('admin');
-    const tracesBefore = await ProviderTrace.countDocuments();
+    await withEnv({
+      FACTURAMA_ENABLED: undefined,
+      FACTURAMA_ENVIRONMENT: undefined,
+      FACTURAMA_API_URL: undefined,
+      FACTURAMA_USERNAME: undefined,
+      FACTURAMA_PASSWORD: undefined,
+      FACTURAMA_API_KEY: undefined,
+      FACTURAMA_CONNECTIVITY_PATH: undefined,
+    }, async () => {
+      const token = await authToken('admin');
+      const tracesBefore = await ProviderTrace.countDocuments();
 
-    const testConnectivity = await request(app)
-      .post('/admin/fiscal/providers/facturama/test-connectivity')
-      .set('Authorization', bearer(token));
-    const health = await request(app)
-      .get('/admin/fiscal/providers/facturama/health')
-      .set('Authorization', bearer(token));
-    const noAuth = await request(app)
-      .post('/admin/fiscal/providers/facturama/test-connectivity');
-    const userToken = await authToken('user');
-    const forbidden = await request(app)
-      .get('/admin/fiscal/providers/facturama/health')
-      .set('Authorization', bearer(userToken));
+      const testConnectivity = await request(app)
+        .post('/admin/fiscal/providers/facturama/test-connectivity')
+        .set('Authorization', bearer(token));
+      const health = await request(app)
+        .get('/admin/fiscal/providers/facturama/health')
+        .set('Authorization', bearer(token));
+      const noAuth = await request(app)
+        .post('/admin/fiscal/providers/facturama/test-connectivity');
+      const userToken = await authToken('user');
+      const forbidden = await request(app)
+        .get('/admin/fiscal/providers/facturama/health')
+        .set('Authorization', bearer(userToken));
 
-    expect(testConnectivity.status).toBe(409);
-    expect(testConnectivity.body).toMatchObject({
-      ok: false,
-      provider: 'facturama',
-      externalConnectivity: 'failed',
+      expect(testConnectivity.status).toBe(409);
+      expect(testConnectivity.body).toMatchObject({
+        ok: false,
+        provider: 'facturama',
+        externalConnectivity: 'failed',
+      });
+      expect(testConnectivity.body.message).toContain('facturama_disabled');
+      expect(health.status).toBe(200);
+      expect(health.body).toMatchObject({
+        provider: 'facturama',
+        enabled: false,
+        externalConnectivity: 'failed',
+      });
+      expect(noAuth.status).toBe(401);
+      expect(forbidden.status).toBe(403);
+      expect(await ProviderTrace.countDocuments()).toBe(tracesBefore);
+      expect(JSON.stringify({ testConnectivity: testConnectivity.body, health: health.body }))
+        .not.toMatch(/password|apiKey|token|secret|xml|pdf|uuid|timbre/i);
     });
-    expect(testConnectivity.body.message).toContain('facturama_disabled');
-    expect(health.status).toBe(200);
-    expect(health.body).toMatchObject({
-      provider: 'facturama',
-      enabled: false,
-      externalConnectivity: 'failed',
-    });
-    expect(noAuth.status).toBe(401);
-    expect(forbidden.status).toBe(403);
-    expect(await ProviderTrace.countDocuments()).toBe(tracesBefore);
-    expect(JSON.stringify({ testConnectivity: testConnectivity.body, health: health.body }))
-      .not.toMatch(/password|apiKey|token|secret|xml|pdf|uuid|timbre/i);
   });
 
   it('evaluates Facturama connectivity readiness independently from fiscal readiness', async () => {
@@ -934,45 +944,51 @@ describe('admin fiscal invoice processing', () => {
   });
 
   it('blocks Facturama connectivity before HTTP when sandbox readiness is incomplete', async () => {
-    const disabled = getFiscalProviderConfig({
-      FISCAL_PROVIDER: 'facturama',
-      FACTURAMA_ENVIRONMENT: 'sandbox',
-      FACTURAMA_API_URL: 'https://facturama.invalid',
-      FACTURAMA_API_KEY: 'fake-key-not-returned',
-    });
-    const invalidEnvironment = getFiscalProviderConfig({
-      FISCAL_PROVIDER: 'facturama',
-      FACTURAMA_ENABLED: 'true',
-      FACTURAMA_ENVIRONMENT: 'production',
-      FACTURAMA_API_URL: 'https://facturama.invalid',
-      FACTURAMA_API_KEY: 'fake-key-not-returned',
-    });
-    const missingApiUrl = getFiscalProviderConfig({
-      FISCAL_PROVIDER: 'facturama',
-      FACTURAMA_ENABLED: 'true',
-      FACTURAMA_ENVIRONMENT: 'sandbox',
-      FACTURAMA_API_KEY: 'fake-key-not-returned',
-    });
-    const missingCredentials = getFiscalProviderConfig({
-      FISCAL_PROVIDER: 'facturama',
-      FACTURAMA_ENABLED: 'true',
-      FACTURAMA_ENVIRONMENT: 'sandbox',
-      FACTURAMA_API_URL: 'https://facturama.invalid',
-    });
-    const invalidTimeout = getFiscalProviderConfig({
-      FISCAL_PROVIDER: 'facturama',
-      FACTURAMA_ENABLED: 'true',
-      FACTURAMA_ENVIRONMENT: 'sandbox',
-      FACTURAMA_API_URL: 'https://facturama.invalid',
-      FACTURAMA_API_KEY: 'fake-key-not-returned',
-      FACTURAMA_TIMEOUT_MS: '1',
-    });
+    await withEnv({
+      FACTURAMA_USERNAME: undefined,
+      FACTURAMA_PASSWORD: undefined,
+      FACTURAMA_API_KEY: undefined,
+    }, async () => {
+      const disabled = getFiscalProviderConfig({
+        FISCAL_PROVIDER: 'facturama',
+        FACTURAMA_ENVIRONMENT: 'sandbox',
+        FACTURAMA_API_URL: 'https://facturama.invalid',
+        FACTURAMA_API_KEY: 'fake-key-not-returned',
+      });
+      const invalidEnvironment = getFiscalProviderConfig({
+        FISCAL_PROVIDER: 'facturama',
+        FACTURAMA_ENABLED: 'true',
+        FACTURAMA_ENVIRONMENT: 'production',
+        FACTURAMA_API_URL: 'https://facturama.invalid',
+        FACTURAMA_API_KEY: 'fake-key-not-returned',
+      });
+      const missingApiUrl = getFiscalProviderConfig({
+        FISCAL_PROVIDER: 'facturama',
+        FACTURAMA_ENABLED: 'true',
+        FACTURAMA_ENVIRONMENT: 'sandbox',
+        FACTURAMA_API_KEY: 'fake-key-not-returned',
+      });
+      const missingCredentials = getFiscalProviderConfig({
+        FISCAL_PROVIDER: 'facturama',
+        FACTURAMA_ENABLED: 'true',
+        FACTURAMA_ENVIRONMENT: 'sandbox',
+        FACTURAMA_API_URL: 'https://facturama.invalid',
+      });
+      const invalidTimeout = getFiscalProviderConfig({
+        FISCAL_PROVIDER: 'facturama',
+        FACTURAMA_ENABLED: 'true',
+        FACTURAMA_ENVIRONMENT: 'sandbox',
+        FACTURAMA_API_URL: 'https://facturama.invalid',
+        FACTURAMA_API_KEY: 'fake-key-not-returned',
+        FACTURAMA_TIMEOUT_MS: '1',
+      });
 
-    expect(evaluateFacturamaConnectivityReadiness(disabled).issues).toContain('facturama_disabled');
-    expect(evaluateFacturamaConnectivityReadiness(invalidEnvironment).issues).toContain('facturama_environment_invalid');
-    expect(evaluateFacturamaConnectivityReadiness(missingApiUrl).issues).toContain('facturama_api_url_missing');
-    expect(evaluateFacturamaConnectivityReadiness(missingCredentials).issues).toContain('facturama_credentials_missing');
-    expect(evaluateFacturamaConnectivityReadiness(invalidTimeout).issues).toContain('facturama_timeout_invalid');
+      expect(evaluateFacturamaConnectivityReadiness(disabled).issues).toContain('facturama_disabled');
+      expect(evaluateFacturamaConnectivityReadiness(invalidEnvironment).issues).toContain('facturama_environment_invalid');
+      expect(evaluateFacturamaConnectivityReadiness(missingApiUrl).issues).toContain('facturama_api_url_missing');
+      expect(evaluateFacturamaConnectivityReadiness(missingCredentials).issues).toContain('facturama_credentials_missing');
+      expect(evaluateFacturamaConnectivityReadiness(invalidTimeout).issues).toContain('facturama_timeout_invalid');
+    });
   });
 
   it('Facturama connectivity endpoint performs a controlled diagnostic with injected client only', async () => {
@@ -1016,6 +1032,10 @@ describe('admin fiscal invoice processing', () => {
         httpStatus: 200,
       });
       expect(client.get).toHaveBeenCalledTimes(1);
+      expect(client.get).toHaveBeenCalledWith(
+        '/api/Account/UserInfo',
+        expect.objectContaining({ timeoutMs: expect.any(Number) })
+      );
       expect(client.post).not.toHaveBeenCalled();
       expect(JSON.stringify({ res: res.body, health: health.body }))
         .not.toMatch(/fake-key-not-returned|https:\/\/facturama\.invalid|xml|pdf|uuid|timbre/i);
