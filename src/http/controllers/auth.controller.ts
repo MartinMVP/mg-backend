@@ -8,6 +8,7 @@ import { env } from '../../config/env';
 import { User } from '../../domain/users/user.model';
 import { Session } from '../../domain/sessions/session.model';
 import { Audit } from '../../domain/audit/audit.model';
+import { ensureFreeMembershipForUser } from '../../domain/memberships/membership.service';
 import { generateCsrfToken } from '../middlewares/csrf';
 
 // payloads
@@ -57,6 +58,7 @@ export async function register(req: Request, res: Response) {
   if (exists) return res.status(409).json({ error: 'Email already registered' });
 
   const user = await User.create({ email: normEmail, password, name, role: 'user' });
+  await ensureFreeMembershipForUser(user._id);
 
   await Audit.create({
     actor: String(user._id),
