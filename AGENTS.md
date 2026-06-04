@@ -1,7 +1,9 @@
-# Mercado Ganadero – Instrucciones para Codex
+# Enlace Ganadero - Instrucciones para Codex
 
 ## Proyecto
-Mercado Ganadero es una plataforma mexicana para catálogo, venta y subastas de ganado de registro y pie de cría.
+El nombre oficial del proyecto es Enlace Ganadero.
+
+Enlace Ganadero es una plataforma mexicana para membresias, catalogo, publicaciones, promocion, publicidad, patrocinios y servicios digitales ganaderos. Las subastas existen como modulo complementario, no como nucleo economico o fiscal principal del negocio.
 
 ## Repositorios
 - Backend: mg-backend
@@ -71,12 +73,25 @@ Sprint 3 en progreso:
 - Las subastas vencidas ya pasan a closed
 - Frontend /auctions y /auctions/:id funcionando en producción
 
-## Tarea prioritaria actual
-Continuar Sprint 3 Fase 2:
-- Mejorar auctionScheduler para emitir evento WebSocket state_changed al cerrar automáticamente una subasta vencida.
-- Asegurar que AuctionRoom actualice su estado a closed sin recargar la página.
-- Preparar cierre formal con currentWinner y currentPrice.
-- Mantener endpoints existentes sin romper producción.
+Sprint 8.8.1 en progreso:
+- Alinear documentacion fiscal con la estrategia de Enlace Ganadero.
+- Documentar que Enlace Ganadero factura servicios propios de la plataforma, no ganado.
+- Documentar la evolucion futura hacia BillableEvent sin implementarla todavia.
+
+## Fiscal Strategy
+- El nombre oficial del proyecto es Enlace Ganadero.
+- El negocio principal son membresias, catalogo, publicaciones, promocion, publicidad, patrocinios y servicios digitales ganaderos.
+- Las subastas son un modulo complementario.
+- Enlace Ganadero no vende ganado.
+- Enlace Ganadero no es propietario de animales.
+- Enlace Ganadero no participa como comprador ni vendedor de ganado.
+- Enlace Ganadero no factura la compraventa de ganado.
+- La responsabilidad fiscal de la compraventa de ganado corresponde a comprador y vendedor.
+- Enlace Ganadero factura servicios propios de la plataforma, por ejemplo memberships, premium_listing, featured_listing, sponsorship, advertisement, auction_commission y administrative_service.
+- La arquitectura fiscal futura debe evolucionar hacia BillableEvent -> Transaction -> FiscalSnapshot -> InvoiceDraft -> InvoiceQueue -> InvoiceProcessor -> FiscalProvider.
+- No disenar nuevos flujos fiscales centrados exclusivamente en AuctionResult.
+- Mantener compatibilidad con el flujo fiscal existente basado en AuctionResult como caso particular o adaptador futuro.
+- No implementar BillableEvent sin aprobacion explicita.
 
 ## Reglas obligatorias
 - No eliminar código existente sin justificación clara.
@@ -90,3 +105,5 @@ Continuar Sprint 3 Fase 2:
 - Agregar o actualizar tests cuando se modifique lógica crítica.
 - Actualizar Swagger si se modifican endpoints.
 - No mencionar IA, AISS ni automatización en textos públicos del frontend.
+- No emitir CFDI, timbrar CFDI, generar XML/PDF fiscal real ni crear UUID fiscal real sin aprobacion explicita.
+- No tocar integracion Facturama ni logica de InvoiceProcessor durante trabajo puramente documental.
