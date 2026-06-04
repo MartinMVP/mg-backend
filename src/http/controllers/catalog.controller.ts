@@ -5,6 +5,10 @@ import { Listing } from '../../domain/listings/listing.model';
 import { Breed } from '../../domain/breeds/breed.model';
 import { Registry } from '../../domain/registries/registry.model';
 import { Audit } from '../../domain/audit/audit.model'; // ⬅️ ajusta si tu ruta difiere
+import {
+  consumeListingSlot,
+  releaseListingSlot,
+} from '../../domain/memberships/membershipCatalogPolicy';
 
 // Helpers
 function num(v: any, def: number) {
@@ -220,7 +224,20 @@ export async function createListing(req: Request, res: Response) {
   if (!canUseAnimal) return res.status(403).json({ error: 'Forbidden' });
 
   const payload = { ...req.body, seller: user.sub, animal: animal._id };
-  const doc = await Listing.create(payload);
+  const requestedStatus = payload.status ?? 'published';
+  const shouldConsumeCapacity = requestedStatus === 'published';
+  const capacity = shouldConsumeCapacity ? await consumeListingSlot(user.sub) : null;
+  if (capacity && !capacity.consumed) {
+    return res.status(409).json({ error: 'membership_limit_reached', remaining: 0 });
+  }
+
+  let doc;
+  try {
+    doc = await Listing.create(payload);
+  } catch (error) {
+    if (capacity?.consumed) await releaseListingSlot(user.sub);
+    throw error;
+  }
 
   await Audit.create({
     actor: user.sub,
@@ -252,8 +269,26 @@ export async function updateListing(req: Request, res: Response) {
     'media',
   ]);
 
+  const beforeStatus = doc.status;
+  const nextStatus = (updates.status as string | undefined) ?? beforeStatus;
+  const shouldConsumeCapacity = beforeStatus !== 'published' && nextStatus === 'published';
+  const shouldReleaseCapacity = beforeStatus === 'published' && ['sold', 'archived'].includes(nextStatus);
+  const capacity = shouldConsumeCapacity ? await consumeListingSlot(doc.seller) : null;
+  if (capacity && !capacity.consumed) {
+    return res.status(409).json({ error: 'membership_limit_reached', remaining: 0 });
+  }
+
   Object.assign(doc, updates);
-  await doc.save();
+  try {
+    await doc.save();
+  } catch (error) {
+    if (capacity?.consumed) await releaseListingSlot(doc.seller);
+    throw error;
+  }
+
+  if (shouldReleaseCapacity) {
+    await releaseListingSlot(doc.seller);
+  }
 
   await Audit.create({
     actor: user.sub,
@@ -275,7 +310,11 @@ export async function deleteListing(req: Request, res: Response) {
   const canDelete = isOwner || ['admin', 'super'].includes(user.role);
   if (!canDelete) return res.status(403).json({ error: 'Forbidden' });
 
+  const shouldReleaseCapacity = doc.status === 'published';
   await doc.deleteOne();
+  if (shouldReleaseCapacity) {
+    await releaseListingSlot(doc.seller);
+  }
 
   await Audit.create({
     actor: user.sub,

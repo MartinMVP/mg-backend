@@ -110,6 +110,22 @@ router.get('/membership/subscriptions/:id', async (req, res) => {
   res.json({ membership, usage });
 });
 
+router.get('/membership/subscriptions/:id/usage', async (req, res) => {
+  const id = String(req.params.id);
+  if (!isValidObjectId(id)) return res.status(400).json({ error: 'Invalid membership id' });
+
+  const membership = await UserMembership.findById(id).lean();
+  if (!membership) return res.status(404).json({ error: 'Not found' });
+
+  const usage = await MembershipUsage.findOne({
+    membershipId: membership._id,
+    periodStart: membership.currentPeriodStart,
+    periodEnd: membership.currentPeriodEnd,
+  }).lean();
+
+  res.json({ membershipId: membership._id, usage });
+});
+
 router.post('/membership/subscriptions/:id/activate', async (req, res) => {
   const user = (req as any).user;
   const id = String(req.params.id);

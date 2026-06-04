@@ -8,6 +8,13 @@ import {
   canCreateListing,
   ensureFreeMembershipForUser,
 } from '../../domain/memberships/membership.service';
+import {
+  canCreateListing as policyCanCreateListing,
+  consumeListingSlot,
+  getMembershipCapacity,
+  getRemainingListingCapacity,
+  releaseListingSlot,
+} from '../../domain/memberships/membershipCatalogPolicy';
 import { UserMembership } from '../../domain/memberships/userMembership.model';
 import { bearer } from '../../test/helpers/auth';
 import { createTestUser } from '../../test/helpers/factories';
@@ -295,6 +302,71 @@ describe('membership domain foundation', () => {
     expect(await canCreateListing(user._id)).toBe(true);
   });
 
+  it('MembershipCatalogPolicy allows publishing within the listing limit', async () => {
+    const user = await createTestUser();
+    const decision = await policyCanCreateListing(user._id);
+
+    expect(decision.allowed).toBe(true);
+    expect(decision.remaining).toBe(1);
+  });
+
+  it('MembershipCatalogPolicy consumes and calculates remaining capacity', async () => {
+    const user = await createTestUser();
+    const consumed = await consumeListingSlot(user._id);
+    const capacity = await getMembershipCapacity(user._id);
+
+    expect(consumed.consumed).toBe(true);
+    expect(capacity.activeListings).toBe(1);
+    expect(capacity.maxActiveListings).toBe(1);
+    expect(await getRemainingListingCapacity(user._id)).toBe(0);
+    expect(await Audit.exists({ actor: String(user._id), action: 'MEMBERSHIP_CAPACITY_CONSUMED' })).toBeTruthy();
+  });
+
+  it('MembershipCatalogPolicy blocks publishing when limit is reached', async () => {
+    const user = await createTestUser();
+    await consumeListingSlot(user._id);
+
+    const blocked = await consumeListingSlot(user._id);
+
+    expect(blocked.consumed).toBe(false);
+    expect(blocked.remaining).toBe(0);
+    expect(await Audit.exists({ actor: String(user._id), action: 'MEMBERSHIP_LIMIT_REACHED' })).toBeTruthy();
+  });
+
+  it('MembershipCatalogPolicy releases capacity without changing historical created count', async () => {
+    const user = await createTestUser();
+    await consumeListingSlot(user._id);
+
+    const released = await releaseListingSlot(user._id);
+    const capacity = await getMembershipCapacity(user._id);
+
+    expect(released.released).toBe(true);
+    expect(capacity.activeListings).toBe(0);
+    expect(capacity.usage?.listingsCreatedThisPeriod).toBe(1);
+    expect(await Audit.exists({ actor: String(user._id), action: 'MEMBERSHIP_CAPACITY_RELEASED' })).toBeTruthy();
+  });
+
+  it('MembershipCatalogPolicy release is idempotent and never creates negative counters', async () => {
+    const user = await createTestUser();
+
+    await releaseListingSlot(user._id);
+    await releaseListingSlot(user._id);
+    const capacity = await getMembershipCapacity(user._id);
+
+    expect(capacity.activeListings).toBe(0);
+    expect(capacity.usage?.activeListingsCount).toBe(0);
+  });
+
+  it('suspended membership blocks new listing capacity', async () => {
+    const user = await createTestUser();
+    await createMembership(user._id, { status: 'suspended' });
+
+    const decision = await policyCanCreateListing(user._id);
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.remaining).toBe(0);
+  });
+
   it('canCreateListing returns false when usage reaches plan limit', async () => {
     const user = await createTestUser();
     const { membership, usage } = await ensureFreeMembershipForUser(user._id);
@@ -314,5 +386,52 @@ describe('membership domain foundation', () => {
     const expiredUser = await createTestUser();
     await createMembership(expiredUser._id, { status: 'expired' });
     expect(await canCreateListing(expiredUser._id)).toBe(false);
+  });
+
+  it('returns account membership capacity for authenticated user', async () => {
+    const { token, user } = await authToken('user');
+    await consumeListingSlot(user._id);
+
+    const res = await request(app)
+      .get('/account/membership/capacity')
+      .set('Authorization', bearer(token))
+      .expect(200);
+
+    expect(res.body).toEqual({
+      plan: 'free',
+      activeListings: 1,
+      maxActiveListings: 1,
+      remaining: 0,
+    });
+  });
+
+  it('requires auth for account membership capacity', async () => {
+    await request(app).get('/account/membership/capacity').expect(401);
+  });
+
+  it('admin can inspect membership usage', async () => {
+    const { token } = await authToken('admin');
+    const user = await createTestUser();
+    const { membership } = await ensureFreeMembershipForUser(user._id);
+    await consumeListingSlot(user._id);
+
+    const res = await request(app)
+      .get(`/admin/membership/subscriptions/${membership._id}/usage`)
+      .set('Authorization', bearer(token))
+      .expect(200);
+
+    expect(String(res.body.membershipId)).toBe(String(membership._id));
+    expect(res.body.usage.activeListingsCount).toBe(1);
+  });
+
+  it('blocks regular users from admin membership usage', async () => {
+    const { token } = await authToken('user');
+    const user = await createTestUser();
+    const { membership } = await ensureFreeMembershipForUser(user._id);
+
+    await request(app)
+      .get(`/admin/membership/subscriptions/${membership._id}/usage`)
+      .set('Authorization', bearer(token))
+      .expect(403);
   });
 });

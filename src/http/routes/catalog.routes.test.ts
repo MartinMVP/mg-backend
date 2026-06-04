@@ -4,6 +4,8 @@ import { Types } from 'mongoose';
 import { Animal } from '../../domain/animals/animal.model';
 import { Breed } from '../../domain/breeds/breed.model';
 import { Listing } from '../../domain/listings/listing.model';
+import { MembershipUsage } from '../../domain/memberships/membershipUsage.model';
+import { UserMembership } from '../../domain/memberships/userMembership.model';
 import { bearer, createAccessToken } from '../../test/helpers/auth';
 import { createTestUser } from '../../test/helpers/factories';
 
@@ -37,6 +39,10 @@ describe('catalog marketplace security', () => {
     });
   }
 
+  async function getUsageFor(userId: Types.ObjectId) {
+    return MembershipUsage.findOne({ userId });
+  }
+
   it('allows a user to create a listing for their own animal', async () => {
     const user = await createTestUser('user');
     const animal = await createAnimalFor(user._id);
@@ -54,6 +60,187 @@ describe('catalog marketplace security', () => {
     expect(res.status).toBe(201);
     expect(String(res.body.animal)).toBe(String(animal._id));
     expect(String(res.body.seller)).toBe(String(user._id));
+  });
+
+  it('published listing creation consumes membership capacity', async () => {
+    const user = await createTestUser('user');
+    const animal = await createAnimalFor(user._id);
+    const token = createAccessToken(user._id, 'user');
+
+    const res = await request(app)
+      .post('/catalog/listings')
+      .set('Authorization', bearer(token))
+      .send({
+        animal: String(animal._id),
+        price: 1500,
+      });
+    const usage = await getUsageFor(user._id);
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('published');
+    expect(usage?.activeListingsCount).toBe(1);
+    expect(usage?.listingsCreatedThisPeriod).toBe(1);
+  });
+
+  it('blocks published listing creation when membership capacity is exhausted', async () => {
+    const user = await createTestUser('user');
+    const firstAnimal = await createAnimalFor(user._id);
+    const secondAnimal = await createAnimalFor(user._id);
+    const token = createAccessToken(user._id, 'user');
+
+    await request(app)
+      .post('/catalog/listings')
+      .set('Authorization', bearer(token))
+      .send({
+        animal: String(firstAnimal._id),
+        price: 1500,
+      })
+      .expect(201);
+
+    const blocked = await request(app)
+      .post('/catalog/listings')
+      .set('Authorization', bearer(token))
+      .send({
+        animal: String(secondAnimal._id),
+        price: 1600,
+      });
+
+    expect(blocked.status).toBe(409);
+    expect(blocked.body).toEqual({ error: 'membership_limit_reached', remaining: 0 });
+    expect(await Listing.countDocuments({ seller: user._id })).toBe(1);
+  });
+
+  it('draft listing does not consume capacity until it is published', async () => {
+    const user = await createTestUser('user');
+    const animal = await createAnimalFor(user._id);
+    const token = createAccessToken(user._id, 'user');
+
+    const draft = await request(app)
+      .post('/catalog/listings')
+      .set('Authorization', bearer(token))
+      .send({
+        animal: String(animal._id),
+        price: 1500,
+        status: 'draft',
+      })
+      .expect(201);
+
+    expect(await getUsageFor(user._id)).toBeNull();
+
+    await request(app)
+      .patch(`/catalog/listings/${draft.body._id}`)
+      .set('Authorization', bearer(token))
+      .send({ status: 'published' })
+      .expect(200);
+
+    const usage = await getUsageFor(user._id);
+    expect(usage?.activeListingsCount).toBe(1);
+    expect(usage?.listingsCreatedThisPeriod).toBe(1);
+  });
+
+  it('sold listing releases membership capacity and duplicate sold does not go negative', async () => {
+    const user = await createTestUser('user');
+    const animal = await createAnimalFor(user._id);
+    const token = createAccessToken(user._id, 'user');
+    const listing = await request(app)
+      .post('/catalog/listings')
+      .set('Authorization', bearer(token))
+      .send({
+        animal: String(animal._id),
+        price: 1500,
+      })
+      .expect(201);
+
+    await request(app)
+      .patch(`/catalog/listings/${listing.body._id}`)
+      .set('Authorization', bearer(token))
+      .send({ status: 'sold' })
+      .expect(200);
+    await request(app)
+      .patch(`/catalog/listings/${listing.body._id}`)
+      .set('Authorization', bearer(token))
+      .send({ status: 'sold' })
+      .expect(200);
+
+    const usage = await getUsageFor(user._id);
+    expect(usage?.activeListingsCount).toBe(0);
+    expect(usage?.listingsCreatedThisPeriod).toBe(1);
+  });
+
+  it('archived listing releases membership capacity', async () => {
+    const user = await createTestUser('user');
+    const animal = await createAnimalFor(user._id);
+    const token = createAccessToken(user._id, 'user');
+    const listing = await request(app)
+      .post('/catalog/listings')
+      .set('Authorization', bearer(token))
+      .send({
+        animal: String(animal._id),
+        price: 1500,
+      })
+      .expect(201);
+
+    await request(app)
+      .patch(`/catalog/listings/${listing.body._id}`)
+      .set('Authorization', bearer(token))
+      .send({ status: 'archived' })
+      .expect(200);
+
+    const usage = await getUsageFor(user._id);
+    expect(usage?.activeListingsCount).toBe(0);
+    expect(usage?.listingsCreatedThisPeriod).toBe(1);
+  });
+
+  it('deleted listing releases membership capacity', async () => {
+    const user = await createTestUser('user');
+    const animal = await createAnimalFor(user._id);
+    const token = createAccessToken(user._id, 'user');
+    const listing = await request(app)
+      .post('/catalog/listings')
+      .set('Authorization', bearer(token))
+      .send({
+        animal: String(animal._id),
+        price: 1500,
+      })
+      .expect(201);
+
+    await request(app)
+      .delete(`/catalog/listings/${listing.body._id}`)
+      .set('Authorization', bearer(token))
+      .expect(200);
+
+    const usage = await getUsageFor(user._id);
+    expect(usage?.activeListingsCount).toBe(0);
+    expect(usage?.listingsCreatedThisPeriod).toBe(1);
+  });
+
+  it('suspended membership keeps existing listing but blocks new published listings', async () => {
+    const user = await createTestUser('user');
+    const firstAnimal = await createAnimalFor(user._id);
+    const secondAnimal = await createAnimalFor(user._id);
+    const token = createAccessToken(user._id, 'user');
+
+    await request(app)
+      .post('/catalog/listings')
+      .set('Authorization', bearer(token))
+      .send({
+        animal: String(firstAnimal._id),
+        price: 1500,
+      })
+      .expect(201);
+
+    await UserMembership.findOneAndUpdate({ userId: user._id }, { $set: { status: 'suspended' } });
+
+    const blocked = await request(app)
+      .post('/catalog/listings')
+      .set('Authorization', bearer(token))
+      .send({
+        animal: String(secondAnimal._id),
+        price: 1600,
+      });
+
+    expect(blocked.status).toBe(409);
+    expect(await Listing.countDocuments({ seller: user._id, status: 'published' })).toBe(1);
   });
 
   it('rejects creating a listing for another user animal', async () => {
