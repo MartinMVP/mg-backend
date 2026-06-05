@@ -1,6 +1,9 @@
 import { Router } from 'express';
+import { Types } from 'mongoose';
 import { requireAuth } from '../middlewares/auth';
 import { requireRole } from '../middlewares/requireRole';
+import { MembershipPlan } from '../../domain/memberships/membershipPlan.model';
+import { UserMembership } from '../../domain/memberships/userMembership.model';
 import { PaymentCheckoutSession } from '../../domain/payments/paymentCheckoutSession.model';
 import { PaymentCustomer } from '../../domain/payments/paymentCustomer.model';
 import { PaymentRecord } from '../../domain/payments/paymentRecord.model';
@@ -19,6 +22,13 @@ function parsePagination(query: any) {
   const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
 
   return { page, limit };
+}
+
+function parseDateFilter(query: any) {
+  const createdAt: Record<string, Date> = {};
+  if (query.createdAfter) createdAt.$gte = new Date(String(query.createdAfter));
+  if (query.createdBefore) createdAt.$lte = new Date(String(query.createdBefore));
+  return Object.keys(createdAt).length ? { createdAt } : {};
 }
 
 router.use(requireAuth, requireAdmin);
@@ -49,14 +59,35 @@ router.get('/payments/checkout-sessions', async (req, res) => {
 
 router.get('/payments/records', async (req, res) => {
   const { page, limit } = parsePagination(req.query);
-  const items = await PaymentRecord.find()
+  const query: Record<string, any> = { ...parseDateFilter(req.query) };
+
+  if (req.query.status) query.status = String(req.query.status);
+  if (req.query.provider) query.provider = String(req.query.provider);
+  if (req.query.userId && Types.ObjectId.isValid(String(req.query.userId))) query.userId = String(req.query.userId);
+  if (req.query.membershipPlan) {
+    if (String(req.query.membershipPlan).match(/^[a-f\d]{24}$/i)) {
+      query.membershipPlanId = String(req.query.membershipPlan);
+    } else {
+      const plan = await MembershipPlan.findOne({ code: String(req.query.membershipPlan).toLowerCase().trim() })
+        .select('_id')
+        .lean();
+      query.membershipPlanId = plan?._id ?? '000000000000000000000000';
+    }
+  }
+
+  const [items, total] = await Promise.all([
+    PaymentRecord.find(query)
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
+      .populate({ path: 'userId', select: 'name email role' })
+      .populate({ path: 'membershipPlanId', select: 'name code price currency billingPeriod' })
     .select('-__v')
-    .lean();
+      .lean(),
+    PaymentRecord.countDocuments(query),
+  ]);
 
-  res.json({ items, page, limit });
+  res.json({ items, page, limit, total });
 });
 
 router.get('/payments/webhook-logs', async (req, res) => {
@@ -73,14 +104,29 @@ router.get('/payments/webhook-logs', async (req, res) => {
 
 router.get('/payments/dunning', async (req, res) => {
   const { page, limit } = parsePagination(req.query);
-  const items = await DunningState.find()
+  const query: Record<string, any> = { ...parseDateFilter(req.query) };
+
+  if (req.query.status) query.status = String(req.query.status);
+  if (req.query.userId && Types.ObjectId.isValid(String(req.query.userId))) query.userId = String(req.query.userId);
+  if (req.query.plan) {
+    const plan = await MembershipPlan.findOne({ code: String(req.query.plan).toLowerCase().trim() }).select('_id').lean();
+    const memberships = await UserMembership.find({ planId: plan?._id ?? '000000000000000000000000' }).select('_id').lean();
+    query.userMembershipId = { $in: memberships.map((membership) => membership._id) };
+  }
+
+  const [items, total] = await Promise.all([
+    DunningState.find(query)
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
+      .populate({ path: 'userId', select: 'name email role' })
+      .populate({ path: 'userMembershipId' })
     .select('-__v')
-    .lean();
+      .lean(),
+    DunningState.countDocuments(query),
+  ]);
 
-  res.json({ items, page, limit });
+  res.json({ items, page, limit, total });
 });
 
 router.get('/payments/dunning/:id', async (req, res) => {
