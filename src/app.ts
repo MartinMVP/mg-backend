@@ -14,6 +14,8 @@ import salesRoutes from './http/routes/sales.routes';
 import adminRoutes from './http/routes/admin';
 import membershipRoutes from './http/routes/membership.routes';
 import adminMembershipRoutes from './http/routes/admin.membership.routes';
+import paymentRoutes from './http/routes/payment.routes';
+import adminPaymentRoutes from './http/routes/admin.payment.routes';
 
 import { securityMiddleware } from './config/security';
 import authRoutes from './http/routes/auth.routes';
@@ -42,9 +44,11 @@ app.use('/', auctionsRoutes);
 app.use('/', notificationsRoutes);
 app.use('/', accountRoutes);
 app.use('/', membershipRoutes);
+app.use('/', paymentRoutes);
 app.use('/', salesRoutes);
 app.use('/admin', adminRoutes);
 app.use('/admin', adminMembershipRoutes);
+app.use('/admin', adminPaymentRoutes);
 
 
 /** ---------- Swagger (opcional/protegido) ---------- */

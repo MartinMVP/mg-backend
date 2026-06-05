@@ -11,6 +11,12 @@ beforeAll(async () => {
   process.env.CORS_ORIGIN = 'http://localhost:5173';
   process.env.COOKIE_SECURE = 'false';
   process.env.SWAGGER_ENABLED = 'false';
+  process.env.STRIPE_ENABLED = 'false';
+  process.env.STRIPE_ENVIRONMENT = 'sandbox';
+  process.env.STRIPE_SECRET_KEY = '';
+  process.env.STRIPE_WEBHOOK_SECRET = '';
+  process.env.STRIPE_SUCCESS_URL = '';
+  process.env.STRIPE_CANCEL_URL = '';
 
   mongo = await MongoMemoryServer.create();
   await mongoose.connect(mongo.getUri());
