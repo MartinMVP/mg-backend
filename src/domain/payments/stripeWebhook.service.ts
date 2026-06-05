@@ -9,6 +9,7 @@ import {
   UserMembership,
 } from '../memberships/userMembership.model';
 import { User } from '../users/user.model';
+import { recoverDunningForMembership, startDunningForPaymentFailure } from './dunning.service';
 import { paymentAuditActions } from './payment.audit';
 import { PaymentCheckoutSession } from './paymentCheckoutSession.model';
 import { PaymentCustomer } from './paymentCustomer.model';
@@ -386,6 +387,12 @@ async function handleInvoicePaid(event: StripeWebhookEvent, config: StripeConfig
     occurredAt: paidAt,
   });
 
+  await recoverDunningForMembership({
+    userId: customer.userId,
+    userMembershipId: membership._id,
+    recoveredAt: paidAt,
+  });
+
   await audit(String(customer.userId), paymentAuditActions.paymentSucceeded);
   await audit(String(customer.userId), paymentAuditActions.webhookProcessed);
 }
@@ -404,12 +411,7 @@ async function handleInvoicePaymentFailed(event: StripeWebhookEvent, config: Str
     })
     : null;
 
-  if (membership && membership.status === 'active') {
-    membership.status = 'payment_failed';
-    await membership.save();
-  }
-
-  await upsertPaymentRecord({
+  const paymentRecord = await upsertPaymentRecord({
     event,
     userId: customer.userId,
     membershipPlanId: session.membershipPlanId,
@@ -425,7 +427,18 @@ async function handleInvoicePaymentFailed(event: StripeWebhookEvent, config: Str
     occurredAt: failedAt,
   });
 
-  await audit(String(customer.userId), paymentAuditActions.paymentFailed);
+  if (membership) {
+    await startDunningForPaymentFailure({
+      userId: customer.userId,
+      userMembershipId: membership._id,
+      paymentRecordId: paymentRecord._id,
+      failedAt,
+      failureReason: 'invoice_payment_failed',
+    });
+  } else {
+    await audit(String(customer.userId), paymentAuditActions.paymentFailed);
+  }
+
   await audit(String(customer.userId), paymentAuditActions.webhookProcessed);
 }
 

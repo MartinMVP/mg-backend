@@ -6,6 +6,8 @@ import { Audit } from '../../domain/audit/audit.model';
 import { MembershipBenefits, MembershipPlan } from '../../domain/memberships/membershipPlan.model';
 import { ensureFreeMembershipForUser } from '../../domain/memberships/membership.service';
 import { UserMembership } from '../../domain/memberships/userMembership.model';
+import { Notification } from '../../domain/notifications/notification.model';
+import { DunningState } from '../../domain/payments/dunningState.model';
 import { paymentAuditActions } from '../../domain/payments/payment.audit';
 import { PaymentCheckoutSession } from '../../domain/payments/paymentCheckoutSession.model';
 import { PaymentCustomer } from '../../domain/payments/paymentCustomer.model';
@@ -270,7 +272,7 @@ describe('Stripe webhook foundation', () => {
     expect(await Audit.exists({ actor: String(user._id), action: paymentAuditActions.paymentSucceeded })).toBeTruthy();
   });
 
-  it('invoice.payment_failed creates failed record and marks paid membership payment_failed', async () => {
+  it('invoice.payment_failed creates failed record and starts paid membership dunning', async () => {
     const { user, customerId, subscriptionId } = await createCorrelatedPaymentContext();
     const plan = await createPaidPlan('existing-paid-failed');
     const now = new Date();
@@ -297,9 +299,13 @@ describe('Stripe webhook foundation', () => {
 
     const membership = await UserMembership.findOne({ providerSubscriptionId: subscriptionId });
     const record = await PaymentRecord.findOne({ providerInvoiceId: 'in_failed_payment' });
-    expect(membership?.status).toBe('payment_failed');
+    const dunning = await DunningState.findOne({ userMembershipId: membership?._id });
+    expect(membership?.status).toBe('grace_period');
+    expect(membership?.graceEndsAt).toBeInstanceOf(Date);
+    expect(dunning?.status).toBe('active');
     expect(record?.status).toBe('failed');
     expect(record?.failureReason).toBe('invoice_payment_failed');
+    expect(await Notification.exists({ userId: user._id, type: 'membership_payment_failed' })).toBeTruthy();
     expect(await Audit.exists({ actor: String(user._id), action: paymentAuditActions.paymentFailed })).toBeTruthy();
   });
 

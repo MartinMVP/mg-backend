@@ -5,7 +5,14 @@ export type NotificationType =
   | 'auction_lost'
   | 'auction_closed'
   | 'sale_confirmed'
-  | 'sale_cancelled';
+  | 'sale_cancelled'
+  | 'membership_payment_failed'
+  | 'membership_grace_period_started'
+  | 'membership_dunning_started'
+  | 'membership_dunning_retry'
+  | 'membership_recovered'
+  | 'membership_suspended'
+  | 'membership_cancelled';
 
 export interface INotification {
   userId: Types.ObjectId;
@@ -20,7 +27,20 @@ const NotificationSchema = new Schema<INotification>(
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     type: {
       type: String,
-      enum: ['auction_won', 'auction_lost', 'auction_closed', 'sale_confirmed', 'sale_cancelled'],
+      enum: [
+        'auction_won',
+        'auction_lost',
+        'auction_closed',
+        'sale_confirmed',
+        'sale_cancelled',
+        'membership_payment_failed',
+        'membership_grace_period_started',
+        'membership_dunning_started',
+        'membership_dunning_retry',
+        'membership_recovered',
+        'membership_suspended',
+        'membership_cancelled',
+      ],
       required: true,
       index: true,
     },

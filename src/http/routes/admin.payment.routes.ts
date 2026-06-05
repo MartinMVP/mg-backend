@@ -5,6 +5,8 @@ import { PaymentCheckoutSession } from '../../domain/payments/paymentCheckoutSes
 import { PaymentCustomer } from '../../domain/payments/paymentCustomer.model';
 import { PaymentRecord } from '../../domain/payments/paymentRecord.model';
 import { PaymentWebhookLog } from '../../domain/payments/paymentWebhookLog.model';
+import { DunningState } from '../../domain/payments/dunningState.model';
+import { processDunningDue } from '../../domain/payments/dunning.service';
 
 const router = Router();
 
@@ -67,6 +69,34 @@ router.get('/payments/webhook-logs', async (req, res) => {
     .lean();
 
   res.json({ items, page, limit });
+});
+
+router.get('/payments/dunning', async (req, res) => {
+  const { page, limit } = parsePagination(req.query);
+  const items = await DunningState.find()
+    .sort({ createdAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .select('-__v')
+    .lean();
+
+  res.json({ items, page, limit });
+});
+
+router.get('/payments/dunning/:id', async (req, res) => {
+  if (!req.params.id.match(/^[a-f\d]{24}$/i)) {
+    return res.status(400).json({ error: 'Invalid dunning id' });
+  }
+
+  const item = await DunningState.findById(req.params.id).select('-__v').lean();
+  if (!item) return res.status(404).json({ error: 'Not found' });
+
+  res.json(item);
+});
+
+router.post('/payments/dunning/process-due', async (_req, res) => {
+  const result = await processDunningDue();
+  res.json(result);
 });
 
 export default router;
