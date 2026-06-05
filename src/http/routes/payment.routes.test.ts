@@ -14,7 +14,7 @@ import {
   toSafeStripeConfig,
   validateStripeConfig,
 } from '../../domain/payments/stripe.config';
-import { requestMembershipCheckout } from '../../domain/payments/stripePayment.service';
+import { requestMembershipCheckout, StripeCheckoutClient } from '../../domain/payments/stripePayment.service';
 import { bearer } from '../../test/helpers/auth';
 import { createTestUser } from '../../test/helpers/factories';
 import { signAccessToken } from '../../utils/jwt';
@@ -43,6 +43,7 @@ async function createPlan(overrides: Record<string, unknown> = {}) {
     price: 299,
     currency: 'MXN',
     billingPeriod: 'monthly',
+    stripePriceId: `price_test_${suffix}`,
     benefits,
     isActive: true,
     isPublic: true,
@@ -50,6 +51,47 @@ async function createPlan(overrides: Record<string, unknown> = {}) {
     ...overrides,
   });
 }
+
+function fakeStripeClient(overrides: {
+  customerId?: string;
+  sessionId?: string;
+  checkoutUrl?: string;
+  expiresAt?: Date;
+  failCustomer?: boolean;
+  failSession?: boolean;
+} = {}) {
+  const calls = {
+    customers: [] as any[],
+    sessions: [] as any[],
+  };
+
+  const client: StripeCheckoutClient = {
+    async createCustomer(input) {
+      calls.customers.push(input);
+      if (overrides.failCustomer) throw new Error('Stripe customer failed with sk_test_secret');
+      return { id: overrides.customerId ?? `cus_test_${Math.random().toString(36).slice(2, 8)}` };
+    },
+    async createCheckoutSession(input) {
+      calls.sessions.push(input);
+      if (overrides.failSession) throw new Error('Stripe session failed with sk_test_secret');
+      return {
+        id: overrides.sessionId ?? `cs_test_${Math.random().toString(36).slice(2, 8)}`,
+        url: overrides.checkoutUrl ?? 'https://checkout.stripe.test/session',
+        expiresAt: overrides.expiresAt ?? new Date(Date.now() + 30 * 60_000),
+      };
+    },
+  };
+
+  return { client, calls };
+}
+
+const enabledSandboxConfig = {
+  enabled: true,
+  environment: 'sandbox' as const,
+  secretKey: 'sk_test_safe',
+  successUrl: 'https://frontend.test/success',
+  cancelUrl: 'https://frontend.test/cancel',
+};
 
 describe('Stripe payment foundation', () => {
   it('keeps Stripe disabled by default with sandbox environment', () => {
@@ -73,6 +115,7 @@ describe('Stripe payment foundation', () => {
       environment: 'production',
       hasSecretKey: true,
       hasWebhookSecret: true,
+      hasApiUrl: false,
       hasSuccessUrl: true,
       hasCancelUrl: false,
     });
@@ -85,6 +128,35 @@ describe('Stripe payment foundation', () => {
 
     expect(validation.ok).toBe(false);
     expect(validation.issues).toContain('stripe_secret_key_missing');
+  });
+
+  it('blocks production environment and live keys for checkout sandbox', () => {
+    const production = validateStripeConfig(getStripeConfig({
+      STRIPE_ENABLED: 'true',
+      STRIPE_ENVIRONMENT: 'production',
+      STRIPE_SECRET_KEY: 'sk_test_safe',
+      STRIPE_SUCCESS_URL: 'https://frontend.test/success',
+      STRIPE_CANCEL_URL: 'https://frontend.test/cancel',
+    }));
+    const liveKey = validateStripeConfig(getStripeConfig({
+      STRIPE_ENABLED: 'true',
+      STRIPE_ENVIRONMENT: 'sandbox',
+      STRIPE_SECRET_KEY: 'sk_live_forbidden',
+      STRIPE_SUCCESS_URL: 'https://frontend.test/success',
+      STRIPE_CANCEL_URL: 'https://frontend.test/cancel',
+    }));
+    const valid = validateStripeConfig(getStripeConfig({
+      STRIPE_ENABLED: 'true',
+      STRIPE_ENVIRONMENT: 'sandbox',
+      STRIPE_SECRET_KEY: 'sk_test_allowed',
+      STRIPE_SUCCESS_URL: 'https://frontend.test/success',
+      STRIPE_CANCEL_URL: 'https://frontend.test/cancel',
+    }));
+
+    expect(production.issues).toContain('stripe_environment_not_sandbox');
+    expect(liveKey.issues).toContain('stripe_live_key_not_allowed');
+    expect(liveKey.issues).toContain('stripe_test_key_required');
+    expect(valid.ok).toBe(true);
   });
 
   it('creates a valid PaymentCustomer', async () => {
@@ -212,6 +284,19 @@ describe('Stripe payment foundation', () => {
     expect(res.body).toEqual({ ok: false, error: 'free_plan_checkout_not_allowed' });
   });
 
+  it('blocks paid checkout when stripePriceId is missing', async () => {
+    const { token } = await authToken('user');
+    const plan = await createPlan({ code: 'missing-price', stripePriceId: undefined });
+
+    const res = await request(app)
+      .post('/account/membership/checkout')
+      .set('Authorization', bearer(token))
+      .send({ planCode: plan.code })
+      .expect(409);
+
+    expect(res.body).toEqual({ ok: false, error: 'stripe_price_id_missing' });
+  });
+
   it('blocks checkout for missing, inactive, or private plans', async () => {
     const { token } = await authToken('user');
     const inactive = await createPlan({ code: 'inactive-plan', isActive: false });
@@ -259,6 +344,155 @@ describe('Stripe payment foundation', () => {
       actor: String(user._id),
       action: paymentAuditActions.membershipCheckoutRequested,
     })).toBeTruthy();
+  });
+
+  it('creates sandbox customer and checkout session when Stripe is enabled', async () => {
+    const { user } = await authToken('user');
+    const plan = await createPlan({ code: 'sandbox-checkout' });
+    const { client, calls } = fakeStripeClient({
+      customerId: 'cus_sandbox_created',
+      sessionId: 'cs_sandbox_created',
+      checkoutUrl: 'https://checkout.stripe.test/cs_sandbox_created',
+    });
+
+    const result = await requestMembershipCheckout({
+      userId: String(user._id),
+      planCode: plan.code,
+    }, enabledSandboxConfig, client);
+
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({
+      ok: true,
+      checkoutUrl: 'https://checkout.stripe.test/cs_sandbox_created',
+      sessionId: 'cs_sandbox_created',
+    });
+    expect(calls.customers).toHaveLength(1);
+    expect(calls.sessions).toHaveLength(1);
+    expect(calls.sessions[0].metadata).toMatchObject({
+      checkoutRequestId: result.body.checkoutRequestId,
+      userId: String(user._id),
+      membershipPlanId: String(plan._id),
+      membershipPlanCode: plan.code,
+    });
+
+    const customer = await PaymentCustomer.findOne({ userId: user._id }).lean();
+    const session = await PaymentCheckoutSession.findOne({ checkoutRequestId: result.body.checkoutRequestId }).lean();
+
+    expect(customer?.providerEnvironment).toBe('sandbox');
+    expect(customer?.providerCustomerId).toBe('cus_sandbox_created');
+    expect((customer as any)?.card).toBeUndefined();
+    expect(session?.providerEnvironment).toBe('sandbox');
+    expect(session?.providerSessionId).toBe('cs_sandbox_created');
+    expect(session?.providerCustomerId).toBe('cus_sandbox_created');
+    expect(session?.status).toBe('open');
+    expect(session?.expiresAt).toBeInstanceOf(Date);
+    expect(await PaymentRecord.countDocuments()).toBe(0);
+    expect(await UserMembership.countDocuments({ userId: user._id })).toBe(0);
+    expect(await Audit.exists({
+      actor: String(user._id),
+      action: paymentAuditActions.stripeCustomerCreated,
+    })).toBeTruthy();
+    expect(await Audit.exists({
+      actor: String(user._id),
+      action: paymentAuditActions.membershipCheckoutCreated,
+    })).toBeTruthy();
+  });
+
+  it('reuses existing sandbox customer', async () => {
+    const { user } = await authToken('user');
+    const plan = await createPlan({ code: 'reuse-customer-checkout' });
+    await PaymentCustomer.create({
+      userId: user._id,
+      provider: 'stripe',
+      providerEnvironment: 'sandbox',
+      providerCustomerId: 'cus_existing',
+      status: 'active',
+    });
+    const { client, calls } = fakeStripeClient({ sessionId: 'cs_reuse_customer' });
+
+    const result = await requestMembershipCheckout({
+      userId: String(user._id),
+      planCode: plan.code,
+    }, enabledSandboxConfig, client);
+
+    expect(result.status).toBe(200);
+    expect(calls.customers).toHaveLength(0);
+    expect(calls.sessions[0].customerId).toBe('cus_existing');
+  });
+
+  it('reuses open non-expired checkout session without creating another Stripe session', async () => {
+    const { user } = await authToken('user');
+    const plan = await createPlan({ code: 'reuse-open-session' });
+    await PaymentCheckoutSession.create({
+      userId: user._id,
+      membershipPlanId: plan._id,
+      provider: 'stripe',
+      providerEnvironment: 'sandbox',
+      providerSessionId: 'cs_existing_open',
+      providerCustomerId: 'cus_existing_open',
+      checkoutRequestId: 'checkout_existing_open',
+      mode: 'subscription',
+      status: 'open',
+      amount: plan.price,
+      currency: 'MXN',
+      checkoutUrl: 'https://checkout.stripe.test/existing',
+      expiresAt: new Date(Date.now() + 30 * 60_000),
+    });
+    const { client, calls } = fakeStripeClient();
+
+    const result = await requestMembershipCheckout({
+      userId: String(user._id),
+      planCode: plan.code,
+    }, enabledSandboxConfig, client);
+
+    expect(result.body).toMatchObject({
+      ok: true,
+      checkoutUrl: 'https://checkout.stripe.test/existing',
+      sessionId: 'cs_existing_open',
+      checkoutRequestId: 'checkout_existing_open',
+    });
+    expect(calls.customers).toHaveLength(0);
+    expect(calls.sessions).toHaveLength(0);
+  });
+
+  it('creates a new checkout session when previous open session expired', async () => {
+    const { user } = await authToken('user');
+    const plan = await createPlan({ code: 'expired-session-checkout' });
+    await PaymentCustomer.create({
+      userId: user._id,
+      provider: 'stripe',
+      providerEnvironment: 'sandbox',
+      providerCustomerId: 'cus_expired',
+      status: 'active',
+    });
+    await PaymentCheckoutSession.create({
+      userId: user._id,
+      membershipPlanId: plan._id,
+      provider: 'stripe',
+      providerEnvironment: 'sandbox',
+      providerSessionId: 'cs_expired',
+      providerCustomerId: 'cus_expired',
+      checkoutRequestId: 'checkout_expired',
+      mode: 'subscription',
+      status: 'open',
+      amount: plan.price,
+      currency: 'MXN',
+      checkoutUrl: 'https://checkout.stripe.test/expired',
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+    const { client, calls } = fakeStripeClient({ sessionId: 'cs_new_after_expired' });
+
+    const result = await requestMembershipCheckout({
+      userId: String(user._id),
+      planCode: plan.code,
+    }, enabledSandboxConfig, client);
+
+    expect(result.body).toMatchObject({ ok: true, sessionId: 'cs_new_after_expired' });
+    expect(calls.sessions).toHaveLength(1);
+    expect(await PaymentCheckoutSession.countDocuments({
+      userId: user._id,
+      membershipPlanId: plan._id,
+    })).toBe(2);
   });
 
   it('does not activate or change membership during checkout request', async () => {

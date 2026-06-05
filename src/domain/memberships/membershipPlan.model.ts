@@ -24,6 +24,7 @@ export interface IMembershipPlan {
   isActive: boolean;
   isPublic: boolean;
   trialDays?: number;
+  stripePriceId?: string;
   sortOrder: number;
   createdAt: Date;
   updatedAt: Date;
@@ -54,6 +55,7 @@ const membershipPlanSchema = new Schema<IMembershipPlan>(
     isActive: { type: Boolean, default: true, index: true },
     isPublic: { type: Boolean, default: true, index: true },
     trialDays: { type: Number, min: 0 },
+    stripePriceId: { type: String, trim: true },
     sortOrder: { type: Number, default: 0, index: true },
   },
   { timestamps: true }
