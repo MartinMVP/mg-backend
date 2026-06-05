@@ -17,6 +17,7 @@ export const operationallyActiveMembershipStatuses: MembershipStatus[] = ['activ
 export type MembershipRenewalMode = 'automatic' | 'manual';
 export type MembershipSource = 'admin' | 'stripe' | 'manual' | 'migration';
 export type MembershipPaymentProvider = 'stripe' | 'manual' | 'none';
+export type MembershipPendingChangeType = 'upgrade' | 'downgrade' | 'reactivation' | 'cancellation';
 
 export interface IUserMembership {
   userId: Types.ObjectId;
@@ -35,6 +36,14 @@ export interface IUserMembership {
   graceEndsAt?: Date;
   suspendedAt?: Date;
   cancelledAt?: Date;
+  cancelAtPeriodEnd?: boolean;
+  cancelScheduledAt?: Date;
+  cancelReason?: string;
+  pendingPlanId?: Types.ObjectId;
+  pendingChangeType?: MembershipPendingChangeType;
+  pendingChangeEffectiveAt?: Date;
+  changedFromPlanId?: Types.ObjectId;
+  changedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -57,12 +66,21 @@ const userMembershipSchema = new Schema<IUserMembership>(
     graceEndsAt: Date,
     suspendedAt: Date,
     cancelledAt: Date,
+    cancelAtPeriodEnd: { type: Boolean, default: false, index: true },
+    cancelScheduledAt: Date,
+    cancelReason: { type: String, trim: true },
+    pendingPlanId: { type: Schema.Types.ObjectId, ref: 'MembershipPlan' },
+    pendingChangeType: { type: String, enum: ['upgrade', 'downgrade', 'reactivation', 'cancellation'] },
+    pendingChangeEffectiveAt: { type: Date, index: true },
+    changedFromPlanId: { type: Schema.Types.ObjectId, ref: 'MembershipPlan' },
+    changedAt: Date,
   },
   { timestamps: true }
 );
 
 userMembershipSchema.index({ userId: 1, status: 1 });
 userMembershipSchema.index({ userId: 1, currentPeriodEnd: 1 });
+userMembershipSchema.index({ pendingChangeEffectiveAt: 1, pendingChangeType: 1 });
 userMembershipSchema.index(
   { userId: 1 },
   {

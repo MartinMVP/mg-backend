@@ -12,7 +12,13 @@ export type NotificationType =
   | 'membership_dunning_retry'
   | 'membership_recovered'
   | 'membership_suspended'
-  | 'membership_cancelled';
+  | 'membership_cancelled'
+  | 'membership_upgrade_requested'
+  | 'membership_downgrade_scheduled'
+  | 'membership_downgrade_completed'
+  | 'membership_cancellation_scheduled'
+  | 'membership_cancellation_completed'
+  | 'membership_reactivation';
 
 export interface INotification {
   userId: Types.ObjectId;
@@ -40,6 +46,12 @@ const NotificationSchema = new Schema<INotification>(
         'membership_recovered',
         'membership_suspended',
         'membership_cancelled',
+        'membership_upgrade_requested',
+        'membership_downgrade_scheduled',
+        'membership_downgrade_completed',
+        'membership_cancellation_scheduled',
+        'membership_cancellation_completed',
+        'membership_reactivation',
       ],
       required: true,
       index: true,

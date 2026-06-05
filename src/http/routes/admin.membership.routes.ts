@@ -11,6 +11,13 @@ import {
   operationallyActiveMembershipStatuses,
   UserMembership,
 } from '../../domain/memberships/userMembership.model';
+import {
+  getChangeLogList,
+  processMembershipPendingChanges,
+  reactivateMembership,
+  requestCancellation,
+  requestPlanChange,
+} from '../../domain/memberships/membershipChange.service';
 
 const router = Router();
 
@@ -40,6 +47,14 @@ function pickPlanPayload(body: any) {
 
 function requireAdmin(req: any, res: any, next: any) {
   return requireRole('admin', 'super')(req, res, next);
+}
+
+function membershipChangeError(res: any, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === 'membership_plan_code_required') return res.status(400).json({ error: message });
+  if (message === 'membership_plan_not_found') return res.status(404).json({ error: message });
+  if (message === 'membership_not_found') return res.status(404).json({ error: message });
+  throw error;
 }
 
 router.use(requireAuth, requireAdmin);
@@ -124,6 +139,66 @@ router.get('/membership/subscriptions/:id/usage', async (req, res) => {
   }).lean();
 
   res.json({ membershipId: membership._id, usage });
+});
+
+router.get('/membership/change-logs', async (req, res) => {
+  const result = await getChangeLogList(req.query);
+  res.json(result);
+});
+
+router.post('/membership/process-pending-changes', async (_req, res) => {
+  const result = await processMembershipPendingChanges();
+  res.json(result);
+});
+
+router.post('/membership/subscriptions/:id/change-plan', async (req, res) => {
+  const id = String(req.params.id);
+  if (!isValidObjectId(id)) return res.status(400).json({ error: 'Invalid membership id' });
+
+  try {
+    const result = await requestPlanChange({
+      membershipId: id,
+      targetPlanCode: String(req.body?.targetPlanCode || req.body?.planCode || ''),
+      source: 'admin',
+    });
+
+    res.status(result.requiresCheckout ? 409 : 200).json(result);
+  } catch (error) {
+    return membershipChangeError(res, error);
+  }
+});
+
+router.post('/membership/subscriptions/:id/cancel', async (req, res) => {
+  const id = String(req.params.id);
+  if (!isValidObjectId(id)) return res.status(400).json({ error: 'Invalid membership id' });
+
+  try {
+    const result = await requestCancellation({
+      membershipId: id,
+      reason: req.body?.reason ? String(req.body.reason) : undefined,
+      source: 'admin',
+    });
+
+    res.json(result);
+  } catch (error) {
+    return membershipChangeError(res, error);
+  }
+});
+
+router.post('/membership/subscriptions/:id/reactivate', async (req, res) => {
+  const id = String(req.params.id);
+  if (!isValidObjectId(id)) return res.status(400).json({ error: 'Invalid membership id' });
+
+  try {
+    const result = await reactivateMembership({
+      membershipId: id,
+      source: 'admin',
+    });
+
+    res.status(result.ok ? 200 : 409).json(result);
+  } catch (error) {
+    return membershipChangeError(res, error);
+  }
 });
 
 router.post('/membership/subscriptions/:id/activate', async (req, res) => {

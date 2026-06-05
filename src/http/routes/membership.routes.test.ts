@@ -250,7 +250,7 @@ describe('membership domain foundation', () => {
     expect(String(detail.body.membership._id)).toBe(String(membership._id));
   });
 
-  it('admin can suspend and cancel memberships', async () => {
+  it('admin can suspend memberships and schedule cancellation', async () => {
     const { token } = await authToken('admin');
     const user = await createTestUser();
     const { membership } = await createMembership(user._id);
@@ -267,7 +267,9 @@ describe('membership domain foundation', () => {
       .set('Authorization', bearer(token))
       .expect(200);
 
-    expect(cancelled.body.status).toBe('cancelled');
+    expect(cancelled.body.scheduled).toBe(true);
+    expect(cancelled.body.membership.status).toBe('suspended');
+    expect(cancelled.body.membership.cancelAtPeriodEnd).toBe(true);
   });
 
   it('admin can activate membership when user has no other active membership', async () => {
