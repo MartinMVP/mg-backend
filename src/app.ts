@@ -16,6 +16,7 @@ import membershipRoutes from './http/routes/membership.routes';
 import adminMembershipRoutes from './http/routes/admin.membership.routes';
 import paymentRoutes from './http/routes/payment.routes';
 import adminPaymentRoutes from './http/routes/admin.payment.routes';
+import stripeWebhookRoutes from './http/routes/stripe.webhook.routes';
 
 import { securityMiddleware } from './config/security';
 import authRoutes from './http/routes/auth.routes';
@@ -28,6 +29,7 @@ import swaggerUi from 'swagger-ui-express';
 import YAML from 'yamljs';
 
 const app = express();
+app.use('/', stripeWebhookRoutes);
 app.use(express.json());
 app.use(morgan('dev'));
 securityMiddleware(app);

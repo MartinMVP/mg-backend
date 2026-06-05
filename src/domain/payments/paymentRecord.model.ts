@@ -56,5 +56,17 @@ const paymentRecordSchema = new Schema<IPaymentRecord>(
 );
 
 paymentRecordSchema.index({ userId: 1, status: 1 });
+paymentRecordSchema.index(
+  { provider: 1, providerEnvironment: 1, providerPaymentId: 1 },
+  { unique: true, sparse: true }
+);
+paymentRecordSchema.index(
+  { provider: 1, providerEnvironment: 1, providerInvoiceId: 1 },
+  { unique: true, sparse: true }
+);
+paymentRecordSchema.index(
+  { provider: 1, providerEnvironment: 1, providerSubscriptionId: 1 },
+  { sparse: true }
+);
 
 export const PaymentRecord = model<IPaymentRecord>('PaymentRecord', paymentRecordSchema);
