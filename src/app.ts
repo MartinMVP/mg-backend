@@ -16,6 +16,7 @@ import membershipRoutes from './http/routes/membership.routes';
 import adminMembershipRoutes from './http/routes/admin.membership.routes';
 import paymentRoutes from './http/routes/payment.routes';
 import adminPaymentRoutes from './http/routes/admin.payment.routes';
+import adminControlCenterRoutes from './http/routes/admin.controlCenter.routes';
 import stripeWebhookRoutes from './http/routes/stripe.webhook.routes';
 
 import { securityMiddleware } from './config/security';
@@ -51,6 +52,7 @@ app.use('/', salesRoutes);
 app.use('/admin', adminRoutes);
 app.use('/admin', adminMembershipRoutes);
 app.use('/admin', adminPaymentRoutes);
+app.use('/admin', adminControlCenterRoutes);
 
 
 /** ---------- Swagger (opcional/protegido) ---------- */
