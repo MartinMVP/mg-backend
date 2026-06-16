@@ -9,6 +9,7 @@ import { MembershipChangeLog } from '../memberships/membershipChangeLog.model';
 import { MembershipPlan } from '../memberships/membershipPlan.model';
 import { UserMembership } from '../memberships/userMembership.model';
 import { Conversation } from '../messaging/conversation.model';
+import { ConversationParticipant } from '../messaging/conversationParticipant.model';
 import { Message } from '../messaging/message.model';
 import { Notification } from '../notifications/notification.model';
 import { DunningState } from '../payments/dunningState.model';
@@ -111,6 +112,7 @@ export async function getAdminControlCenterDashboard() {
     activeConversations,
     archivedConversations,
     closedConversations,
+    conversationsWithUnreadMessages,
     unresolvedAlerts,
   ] = await Promise.all([
     User.countDocuments(),
@@ -150,6 +152,7 @@ export async function getAdminControlCenterDashboard() {
     Conversation.countDocuments({ status: 'active' }),
     Conversation.countDocuments({ status: 'archived' }),
     Conversation.countDocuments({ status: 'closed' }),
+    ConversationParticipant.distinct('conversationId', { unreadCount: { $gt: 0 } }),
     Audit.countDocuments({ action: { $in: alertActionNames } }),
   ]);
 
@@ -238,6 +241,8 @@ export async function getAdminControlCenterDashboard() {
       activeConversations,
       archivedConversations,
       closedConversations,
+      averageMessagesPerConversation: conversationsTotal > 0 ? messagesTotal / conversationsTotal : 0,
+      conversationsWithUnreadMessages: conversationsWithUnreadMessages.length,
     },
     alerts,
   };

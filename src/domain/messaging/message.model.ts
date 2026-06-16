@@ -14,6 +14,8 @@ export interface IMessage {
   senderId?: Types.ObjectId;
   type: MessageType;
   source?: MessageSource;
+  metadata?: Record<string, unknown>;
+  eventKey?: string;
   status: MessageStatus;
   body: string;
   createdAt: Date;
@@ -26,6 +28,8 @@ const messageSchema = new Schema<IMessage>(
     senderId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     type: { type: String, enum: messageTypes, required: true, index: true },
     source: { type: String, enum: messageSources },
+    metadata: { type: Schema.Types.Mixed },
+    eventKey: { type: String, trim: true },
     status: { type: String, enum: messageStatuses, default: 'active', index: true },
     body: { type: String, required: true, trim: true, maxlength: 4000 },
   },
@@ -36,8 +40,18 @@ messageSchema.pre('validate', function () {
   if (this.type === 'text' && !this.senderId) {
     this.invalidate('senderId', 'senderId_required_for_text_message');
   }
+  if (this.type === 'text' && this.eventKey) {
+    this.invalidate('eventKey', 'eventKey_allowed_only_for_system_messages');
+  }
 });
 
 messageSchema.index({ conversationId: 1, createdAt: 1 });
+messageSchema.index(
+  { conversationId: 1, eventKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { type: 'system', eventKey: { $type: 'string' } },
+  }
+);
 
 export const Message = model<IMessage>('Message', messageSchema);

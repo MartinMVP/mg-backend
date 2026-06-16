@@ -10,8 +10,10 @@ import { UserMembership } from '../../domain/memberships/userMembership.model';
 import { Conversation } from '../../domain/messaging/conversation.model';
 import { ConversationParticipant } from '../../domain/messaging/conversationParticipant.model';
 import { Message } from '../../domain/messaging/message.model';
+import { Notification } from '../../domain/notifications/notification.model';
 import {
   conversationDailyLimitsByPlan,
+  createSystemMessageFromNotification,
   messagingAuditActions,
 } from '../../domain/messaging/messaging.service';
 import { bearer, createAccessToken } from '../../test/helpers/auth';
@@ -142,8 +144,9 @@ describe('messaging routes', () => {
       .set('Authorization', bearer(token))
       .expect(200);
 
-    expect(res.body.map((item: any) => String(item._id))).toEqual([String(conversation._id)]);
-    expect(res.body.every((item: any) => String(item.createdBy) === String(buyer._id))).toBe(true);
+    expect(res.body).toMatchObject({ page: 1, limit: 20, total: 1 });
+    expect(res.body.conversations.map((item: any) => String(item._id))).toEqual([String(conversation._id)]);
+    expect(res.body.conversations.every((item: any) => String(item.createdBy) === String(buyer._id))).toBe(true);
   });
 
   it('reuses an existing active commercial conversation for same listing buyer and seller', async () => {
@@ -195,7 +198,7 @@ describe('messaging routes', () => {
   });
 
   it('sends and lists text messages for active participants', async () => {
-    const { buyer, token, conversation } = await createConversationViaListing();
+    const { buyer, seller, token, conversation } = await createConversationViaListing();
 
     const sent = await request(app)
       .post(`/messaging/conversations/${conversation._id}/messages`)
@@ -206,30 +209,164 @@ describe('messaging routes', () => {
     expect(sent.body.type).toBe('text');
     expect(String(sent.body.senderId)).toBe(String(buyer._id));
 
+    const updatedConversation = await Conversation.findById(conversation._id).lean();
+    expect(updatedConversation?.firstMessageAt).toBeTruthy();
+    expect(updatedConversation?.lastMessageAt).toBeTruthy();
+    expect(String(updatedConversation?.lastMessageId)).toBe(String(sent.body._id));
+    expect(updatedConversation?.messageCount).toBe(1);
+    expect(updatedConversation?.lastMessagePreview).toBe('Me interesa esta publicacion.');
+
+    const buyerParticipant = await ConversationParticipant.findOne({
+      conversationId: conversation._id,
+      userId: buyer._id,
+    }).lean();
+    const sellerParticipant = await ConversationParticipant.findOne({
+      conversationId: conversation._id,
+      userId: seller._id,
+    }).lean();
+    expect(buyerParticipant?.unreadCount).toBe(0);
+    expect(sellerParticipant?.unreadCount).toBe(1);
+
     const listed = await request(app)
       .get(`/messaging/conversations/${conversation._id}/messages`)
       .set('Authorization', bearer(token))
       .expect(200);
 
-    expect(listed.body).toHaveLength(1);
-    expect(listed.body[0].body).toBe('Me interesa esta publicacion.');
+    expect(listed.body).toMatchObject({ page: 1, limit: 20, total: 1 });
+    expect(listed.body.messages[0].body).toBe('Me interesa esta publicacion.');
     await expect(Audit.exists({ action: messagingAuditActions.messageSent })).resolves.toBeTruthy();
   });
 
-  it('creates and lists system messages', async () => {
+  it('creates deduplicated system messages with sanitized metadata', async () => {
     const { token, conversation } = await createConversationViaListing();
 
     const sent = await request(app)
       .post(`/messaging/conversations/${conversation._id}/messages`)
       .set('Authorization', bearer(token))
-      .send({ type: 'system', source: 'system', body: 'Conversacion iniciada.' })
+      .send({
+        type: 'system',
+        source: 'system',
+        body: 'Conversacion iniciada.',
+        eventKey: 'conversation-started',
+        metadata: {
+          notificationId: 'notif_1',
+          token: 'secret-token',
+          payload: { raw: true },
+        },
+      })
       .expect(201);
 
     expect(sent.body.type).toBe('system');
     expect(sent.body.senderId).toBeUndefined();
+    expect(sent.body.eventKey).toBe('conversation-started');
+    expect(sent.body.metadata).toEqual({ notificationId: 'notif_1' });
 
+    const duplicate = await request(app)
+      .post(`/messaging/conversations/${conversation._id}/messages`)
+      .set('Authorization', bearer(token))
+      .send({
+        type: 'system',
+        source: 'system',
+        body: 'Duplicado',
+        eventKey: 'conversation-started',
+      })
+      .expect(201);
+
+    expect(String(duplicate.body._id)).toBe(String(sent.body._id));
     expect(await Message.countDocuments({ type: 'system' })).toBe(1);
     await expect(Audit.exists({ action: messagingAuditActions.systemMessageCreated })).resolves.toBeTruthy();
+  });
+
+  it('marks a participant conversation as read and blocks outsiders', async () => {
+    const { seller, token, conversation } = await createConversationViaListing();
+    const outsider = await createTestUser('user');
+
+    await request(app)
+      .post(`/messaging/conversations/${conversation._id}/messages`)
+      .set('Authorization', bearer(token))
+      .send({ body: 'Mensaje para lectura.' })
+      .expect(201);
+
+    const read = await request(app)
+      .post(`/messaging/conversations/${conversation._id}/read`)
+      .set('Authorization', bearer(createAccessToken(seller._id, 'user')))
+      .expect(200);
+
+    expect(read.body.unreadCount).toBe(0);
+    expect(read.body.lastReadAt).toBeTruthy();
+    expect(read.body.lastSeenMessageAt).toBeTruthy();
+    await expect(Audit.exists({ action: messagingAuditActions.messageRead })).resolves.toBeTruthy();
+    await expect(Audit.exists({ action: messagingAuditActions.conversationRead })).resolves.toBeTruthy();
+
+    await request(app)
+      .post(`/messaging/conversations/${conversation._id}/read`)
+      .set('Authorization', bearer(createAccessToken(outsider._id, 'user')))
+      .expect(403);
+  });
+
+  it('orders conversations by latest activity and paginates messages oldest first', async () => {
+    const first = await createConversationViaListing();
+    const second = await createConversationViaListing();
+
+    await request(app)
+      .post(`/messaging/conversations/${first.conversation._id}/messages`)
+      .set('Authorization', bearer(first.token))
+      .send({ body: 'Primer mensaje.' })
+      .expect(201);
+    await request(app)
+      .post(`/messaging/conversations/${second.conversation._id}/messages`)
+      .set('Authorization', bearer(second.token))
+      .send({ body: 'Mensaje mas reciente.' })
+      .expect(201);
+
+    const conversations = await request(app)
+      .get('/messaging/conversations?page=1&limit=1')
+      .set('Authorization', bearer(second.token))
+      .expect(200);
+
+    expect(conversations.body).toMatchObject({ page: 1, limit: 1, total: 1 });
+    expect(String(conversations.body.conversations[0]._id)).toBe(String(second.conversation._id));
+    expect(conversations.body.conversations[0]).toMatchObject({
+      messageCount: 1,
+      lastMessagePreview: 'Mensaje mas reciente.',
+      unreadCount: 0,
+    });
+
+    await request(app)
+      .post(`/messaging/conversations/${second.conversation._id}/messages`)
+      .set('Authorization', bearer(second.token))
+      .send({ body: 'Segundo mensaje.' })
+      .expect(201);
+
+    const messages = await request(app)
+      .get(`/messaging/conversations/${second.conversation._id}/messages?page=1&limit=1`)
+      .set('Authorization', bearer(second.token))
+      .expect(200);
+
+    expect(messages.body).toMatchObject({ page: 1, limit: 1, total: 2 });
+    expect(messages.body.messages[0].body).toBe('Mensaje mas reciente.');
+  });
+
+  it('supports notification-to-system-message helper without deleting notification records', async () => {
+    const { buyer, conversation } = await createConversationViaListing();
+    const notification = await Notification.create({
+      userId: buyer._id,
+      type: 'membership_recovered',
+      title: 'Actualizacion',
+      message: 'Tu conversacion fue actualizada',
+    });
+
+    const message = await createSystemMessageFromNotification({
+      conversationId: conversation._id,
+      title: notification.title,
+      message: notification.message,
+      eventKey: `notification:${notification._id}`,
+      metadata: { notificationId: String(notification._id), secret: 'hidden' },
+    });
+
+    expect(message.type).toBe('system');
+    expect(message.metadata).toEqual({ notificationId: String(notification._id) });
+    await expect(Notification.exists({ _id: notification._id })).resolves.toBeTruthy();
   });
 
   it('blocks non participants from sending and listing messages', async () => {

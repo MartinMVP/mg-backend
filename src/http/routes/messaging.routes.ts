@@ -7,6 +7,7 @@ import {
   getConversationsForUser,
   getOrCreateCommercialConversation,
   listMessagesForParticipant,
+  markConversationRead,
   sendMessage,
   sendSystemMessage,
 } from '../../domain/messaging/messaging.service';
@@ -22,6 +23,7 @@ function handleMessagingError(res: any, error: unknown) {
   if (message === 'conversation_not_found') return res.status(404).json({ error: message });
   if (message === 'cannot_message_self') return res.status(400).json({ error: message });
   if (message === 'message_body_required') return res.status(400).json({ error: message });
+  if (message === 'metadata_invalid') return res.status(400).json({ error: message });
   if (message === 'forbidden') return res.status(403).json({ error: message });
   if (message === 'conversation_daily_limit_reached') {
     return res.status(429).json({
@@ -61,7 +63,12 @@ router.post('/conversations', requireAuth, async (req, res, next) => {
 router.get('/conversations', requireAuth, async (req, res, next) => {
   try {
     const user = (req as any).user;
-    const conversations = await getConversationsForUser(user.sub);
+    const conversations = await getConversationsForUser(user.sub, {
+      page: req.query.page,
+      limit: req.query.limit,
+      status: req.query.status as any,
+      type: req.query.type as any,
+    });
     res.json(conversations);
   } catch (error) {
     next(error);
@@ -82,6 +89,20 @@ router.get('/conversations/:id', requireAuth, async (req, res, next) => {
   }
 });
 
+router.post('/conversations/:id/read', requireAuth, async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const participant = await markConversationRead({ conversationId: String(req.params.id), userId: user.sub });
+    res.json(participant);
+  } catch (error) {
+    try {
+      return handleMessagingError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
 router.post('/conversations/:id/messages', requireAuth, async (req, res, next) => {
   try {
     const user = (req as any).user;
@@ -92,6 +113,8 @@ router.post('/conversations/:id/messages', requireAuth, async (req, res, next) =
           actorId: user.sub,
           source: req.body?.source || 'system',
           body: String(req.body?.body || ''),
+          eventKey: req.body?.eventKey,
+          metadata: req.body?.metadata,
         })
       : await sendMessage({
           conversationId: String(req.params.id),
@@ -112,7 +135,10 @@ router.post('/conversations/:id/messages', requireAuth, async (req, res, next) =
 router.get('/conversations/:id/messages', requireAuth, async (req, res, next) => {
   try {
     const user = (req as any).user;
-    const messages = await listMessagesForParticipant(String(req.params.id), user.sub);
+    const messages = await listMessagesForParticipant(String(req.params.id), user.sub, {
+      page: req.query.page,
+      limit: req.query.limit,
+    });
     res.json(messages);
   } catch (error) {
     try {

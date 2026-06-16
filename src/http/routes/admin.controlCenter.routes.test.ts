@@ -12,6 +12,7 @@ import { MembershipPlan, MembershipBenefits } from '../../domain/memberships/mem
 import { MembershipChangeLog } from '../../domain/memberships/membershipChangeLog.model';
 import { UserMembership } from '../../domain/memberships/userMembership.model';
 import { Conversation } from '../../domain/messaging/conversation.model';
+import { ConversationParticipant } from '../../domain/messaging/conversationParticipant.model';
 import { Message } from '../../domain/messaging/message.model';
 import { Notification } from '../../domain/notifications/notification.model';
 import { DunningState } from '../../domain/payments/dunningState.model';
@@ -177,6 +178,11 @@ describe('admin control center', () => {
     });
     await Conversation.create({ type: 'support', status: 'archived', createdBy: freeUser._id });
     await Conversation.create({ type: 'system', status: 'closed', createdBy: dunningUser._id });
+    await ConversationParticipant.create({
+      conversationId: activeConversation._id,
+      userId: freeUser._id,
+      unreadCount: 2,
+    });
     await Message.create({
       conversationId: activeConversation._id,
       senderId: paidUser._id,
@@ -217,6 +223,8 @@ describe('admin control center', () => {
       activeConversations: 1,
       archivedConversations: 1,
       closedConversations: 1,
+      averageMessagesPerConversation: 2 / 3,
+      conversationsWithUnreadMessages: 1,
     });
     expect(await Audit.exists({ action: adminControlCenterAuditActions.dashboardViewed })).toBeTruthy();
   });
