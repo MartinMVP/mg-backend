@@ -8,6 +8,7 @@ export interface IAudit {
   transactionId?: Types.ObjectId;
   invoiceRecordId?: Types.ObjectId;
   invoiceQueueId?: Types.ObjectId;
+  conversationId?: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -21,6 +22,7 @@ const AuditSchema = new Schema<IAudit>(
     transactionId: { type: Schema.Types.ObjectId, ref: 'Transaction', index: true },
     invoiceRecordId: { type: Schema.Types.ObjectId, ref: 'InvoiceRecord', index: true },
     invoiceQueueId: { type: Schema.Types.ObjectId, ref: 'InvoiceQueue', index: true },
+    conversationId: { type: Schema.Types.ObjectId, ref: 'Conversation', index: true },
   },
   { timestamps: true }
 );

@@ -11,6 +11,8 @@ import { Listing } from '../../domain/listings/listing.model';
 import { MembershipPlan, MembershipBenefits } from '../../domain/memberships/membershipPlan.model';
 import { MembershipChangeLog } from '../../domain/memberships/membershipChangeLog.model';
 import { UserMembership } from '../../domain/memberships/userMembership.model';
+import { Conversation } from '../../domain/messaging/conversation.model';
+import { Message } from '../../domain/messaging/message.model';
 import { Notification } from '../../domain/notifications/notification.model';
 import { DunningState } from '../../domain/payments/dunningState.model';
 import { PaymentCheckoutSession } from '../../domain/payments/paymentCheckoutSession.model';
@@ -167,6 +169,28 @@ describe('admin control center', () => {
       failedAt: new Date(),
       retrySchedule: [],
     });
+    const activeConversation = await Conversation.create({
+      type: 'commercial',
+      status: 'active',
+      listingId: listing._id,
+      createdBy: paidUser._id,
+    });
+    await Conversation.create({ type: 'support', status: 'archived', createdBy: freeUser._id });
+    await Conversation.create({ type: 'system', status: 'closed', createdBy: dunningUser._id });
+    await Message.create({
+      conversationId: activeConversation._id,
+      senderId: paidUser._id,
+      type: 'text',
+      status: 'active',
+      body: 'Mensaje de prueba',
+    });
+    await Message.create({
+      conversationId: activeConversation._id,
+      type: 'system',
+      source: 'system',
+      status: 'active',
+      body: 'Mensaje de sistema',
+    });
 
     const res = await request(app)
       .get('/admin/control-center/dashboard')
@@ -187,6 +211,13 @@ describe('admin control center', () => {
     expect(res.body.dunning).toMatchObject({ activeDunningCases: 1 });
     expect(res.body.auctions).toMatchObject({ live: 1, cancelled: 0 });
     expect(res.body.fiscal).toHaveProperty('transactions');
+    expect(res.body.messaging).toMatchObject({
+      conversationsTotal: 3,
+      messagesTotal: 2,
+      activeConversations: 1,
+      archivedConversations: 1,
+      closedConversations: 1,
+    });
     expect(await Audit.exists({ action: adminControlCenterAuditActions.dashboardViewed })).toBeTruthy();
   });
 
