@@ -26,7 +26,7 @@ const conversationSchema = new Schema<IConversation>(
     type: { type: String, enum: conversationTypes, required: true, index: true },
     status: { type: String, enum: conversationStatuses, default: 'active', index: true },
     listingId: { type: Schema.Types.ObjectId, ref: 'Listing', index: true },
-    auctionListingId: { type: Schema.Types.ObjectId, ref: 'Auction', index: true },
+    auctionListingId: { type: Schema.Types.ObjectId, ref: 'AuctionListing', index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     firstMessageAt: { type: Date },
     lastMessageAt: { type: Date, index: true },

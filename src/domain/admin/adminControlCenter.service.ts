@@ -1,5 +1,7 @@
 import { Audit } from '../audit/audit.model';
 import { Animal } from '../animals/animal.model';
+import { AuctionBid } from '../auctionListings/auctionBid.model';
+import { AuctionListing } from '../auctionListings/auctionListing.model';
 import { Auction } from '../auctions/auction.model';
 import { FiscalProfile } from '../fiscalProfiles/fiscalProfile.model';
 import { InvoiceDraft } from '../invoiceDrafts/invoiceDraft.model';
@@ -113,6 +115,11 @@ export async function getAdminControlCenterDashboard() {
     archivedConversations,
     closedConversations,
     conversationsWithUnreadMessages,
+    auctionListingsTotal,
+    activeAuctionListings,
+    closedAuctionListings,
+    cancelledAuctionListings,
+    auctionListingBidsTotal,
     unresolvedAlerts,
   ] = await Promise.all([
     User.countDocuments(),
@@ -153,6 +160,11 @@ export async function getAdminControlCenterDashboard() {
     Conversation.countDocuments({ status: 'archived' }),
     Conversation.countDocuments({ status: 'closed' }),
     ConversationParticipant.distinct('conversationId', { unreadCount: { $gt: 0 } }),
+    AuctionListing.countDocuments(),
+    AuctionListing.countDocuments({ status: 'active' }),
+    AuctionListing.countDocuments({ status: 'closed' }),
+    AuctionListing.countDocuments({ status: 'cancelled' }),
+    AuctionBid.countDocuments(),
     Audit.countDocuments({ action: { $in: alertActionNames } }),
   ]);
 
@@ -243,6 +255,13 @@ export async function getAdminControlCenterDashboard() {
       closedConversations,
       averageMessagesPerConversation: conversationsTotal > 0 ? messagesTotal / conversationsTotal : 0,
       conversationsWithUnreadMessages: conversationsWithUnreadMessages.length,
+    },
+    auctionListings: {
+      total: auctionListingsTotal,
+      active: activeAuctionListings,
+      closed: closedAuctionListings,
+      cancelled: cancelledAuctionListings,
+      bidsTotal: auctionListingBidsTotal,
     },
     alerts,
   };

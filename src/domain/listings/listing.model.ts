@@ -1,6 +1,6 @@
 import { Schema, model, Types } from 'mongoose';
 
-export type ListingStatus = 'draft' | 'published' | 'reserved' | 'sold' | 'archived';
+export type ListingStatus = 'draft' | 'published' | 'reserved' | 'sold' | 'archived' | 'auction_active' | 'auction_closed';
 
 export interface IListing {
   animal: Types.ObjectId;
@@ -23,7 +23,7 @@ const ListingSchema = new Schema<IListing>(
     featured: { type: Boolean, default: false, index: true },
     status: {
       type: String,
-      enum: ['draft', 'published', 'reserved', 'sold', 'archived'],
+      enum: ['draft', 'published', 'reserved', 'sold', 'archived', 'auction_active', 'auction_closed'],
       default: 'published',
       index: true,
     },

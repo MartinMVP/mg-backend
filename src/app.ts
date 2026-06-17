@@ -19,6 +19,8 @@ import adminPaymentRoutes from './http/routes/admin.payment.routes';
 import adminControlCenterRoutes from './http/routes/admin.controlCenter.routes';
 import stripeWebhookRoutes from './http/routes/stripe.webhook.routes';
 import messagingRoutes from './http/routes/messaging.routes';
+import auctionListingRoutes from './http/routes/auctionListing.routes';
+import adminAuctionListingRoutes from './http/routes/admin.auctionListing.routes';
 
 import { securityMiddleware } from './config/security';
 import authRoutes from './http/routes/auth.routes';
@@ -51,7 +53,9 @@ app.use('/', membershipRoutes);
 app.use('/', paymentRoutes);
 app.use('/', salesRoutes);
 app.use('/messaging', messagingRoutes);
+app.use('/auction-listings', auctionListingRoutes);
 app.use('/admin', adminRoutes);
+app.use('/admin', adminAuctionListingRoutes);
 app.use('/admin', adminMembershipRoutes);
 app.use('/admin', adminPaymentRoutes);
 app.use('/admin', adminControlCenterRoutes);

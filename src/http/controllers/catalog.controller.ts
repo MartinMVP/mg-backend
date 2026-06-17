@@ -31,6 +31,10 @@ function pickAllowed(source: any, allowed: string[]) {
   return output;
 }
 
+function consumesListingCapacity(status: string) {
+  return ['published', 'auction_active', 'auction_closed'].includes(status);
+}
+
 // ---------- Animals ----------
 export async function listAnimals(req: Request, res: Response) {
   const {
@@ -225,7 +229,7 @@ export async function createListing(req: Request, res: Response) {
 
   const payload = { ...req.body, seller: user.sub, animal: animal._id };
   const requestedStatus = payload.status ?? 'published';
-  const shouldConsumeCapacity = requestedStatus === 'published';
+  const shouldConsumeCapacity = consumesListingCapacity(requestedStatus);
   const capacity = shouldConsumeCapacity ? await consumeListingSlot(user.sub) : null;
   if (capacity && !capacity.consumed) {
     return res.status(409).json({ error: 'membership_limit_reached', remaining: 0 });
@@ -271,8 +275,8 @@ export async function updateListing(req: Request, res: Response) {
 
   const beforeStatus = doc.status;
   const nextStatus = (updates.status as string | undefined) ?? beforeStatus;
-  const shouldConsumeCapacity = beforeStatus !== 'published' && nextStatus === 'published';
-  const shouldReleaseCapacity = beforeStatus === 'published' && ['sold', 'archived'].includes(nextStatus);
+  const shouldConsumeCapacity = !consumesListingCapacity(beforeStatus) && consumesListingCapacity(nextStatus);
+  const shouldReleaseCapacity = consumesListingCapacity(beforeStatus) && ['sold', 'archived'].includes(nextStatus);
   const capacity = shouldConsumeCapacity ? await consumeListingSlot(doc.seller) : null;
   if (capacity && !capacity.consumed) {
     return res.status(409).json({ error: 'membership_limit_reached', remaining: 0 });
@@ -310,7 +314,7 @@ export async function deleteListing(req: Request, res: Response) {
   const canDelete = isOwner || ['admin', 'super'].includes(user.role);
   if (!canDelete) return res.status(403).json({ error: 'Forbidden' });
 
-  const shouldReleaseCapacity = doc.status === 'published';
+  const shouldReleaseCapacity = consumesListingCapacity(doc.status);
   await doc.deleteOne();
   if (shouldReleaseCapacity) {
     await releaseListingSlot(doc.seller);
