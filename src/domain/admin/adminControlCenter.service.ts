@@ -2,6 +2,7 @@ import { Audit } from '../audit/audit.model';
 import { Animal } from '../animals/animal.model';
 import { AuctionBid } from '../auctionListings/auctionBid.model';
 import { AuctionListing } from '../auctionListings/auctionListing.model';
+import { AuctionCloseOutcome } from '../auctionOperations/auctionCloseOutcome.model';
 import { Auction } from '../auctions/auction.model';
 import { FiscalProfile } from '../fiscalProfiles/fiscalProfile.model';
 import { InvoiceDraft } from '../invoiceDrafts/invoiceDraft.model';
@@ -120,6 +121,9 @@ export async function getAdminControlCenterDashboard() {
     closedAuctionListings,
     cancelledAuctionListings,
     auctionListingBidsTotal,
+    completedAuctionCloseOutcomes,
+    notCompletedAuctionCloseOutcomes,
+    sellerUnresponsiveReports,
     unresolvedAlerts,
   ] = await Promise.all([
     User.countDocuments(),
@@ -165,6 +169,9 @@ export async function getAdminControlCenterDashboard() {
     AuctionListing.countDocuments({ status: 'closed' }),
     AuctionListing.countDocuments({ status: 'cancelled' }),
     AuctionBid.countDocuments(),
+    AuctionCloseOutcome.countDocuments({ outcome: 'completed' }),
+    AuctionCloseOutcome.countDocuments({ outcome: 'not_completed' }),
+    AuctionCloseOutcome.countDocuments({ outcome: 'seller_unresponsive' }),
     Audit.countDocuments({ action: { $in: alertActionNames } }),
   ]);
 
@@ -262,6 +269,11 @@ export async function getAdminControlCenterDashboard() {
       closed: closedAuctionListings,
       cancelled: cancelledAuctionListings,
       bidsTotal: auctionListingBidsTotal,
+    },
+    auctionOperations: {
+      completedOutcomes: completedAuctionCloseOutcomes,
+      notCompletedOutcomes: notCompletedAuctionCloseOutcomes,
+      sellerUnresponsiveReports,
     },
     alerts,
   };

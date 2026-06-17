@@ -7,6 +7,10 @@ import {
   listAuctionListings,
   placeBid,
 } from '../../domain/auctionListings/auctionListing.service';
+import {
+  recordAuctionCloseOutcome,
+  reportSellerUnresponsive,
+} from '../../domain/auctionOperations/auctionCloseOutcome.service';
 
 const router = Router();
 
@@ -95,6 +99,41 @@ router.get('/:id/bids', async (req, res, next) => {
       limit: req.query.limit,
     });
     res.json(result);
+  } catch (error) {
+    try {
+      return handleAuctionListingError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.post('/:id/close-outcome', requireAuth, async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const outcome = await recordAuctionCloseOutcome({
+      auctionListingId: String(req.params.id),
+      actorId: user.sub,
+      outcome: req.body?.outcome,
+    });
+    res.status(201).json(outcome);
+  } catch (error) {
+    try {
+      return handleAuctionListingError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.post('/:id/report-seller-unresponsive', requireAuth, async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const outcome = await reportSellerUnresponsive({
+      auctionListingId: String(req.params.id),
+      actorId: user.sub,
+    });
+    res.status(201).json(outcome);
   } catch (error) {
     try {
       return handleAuctionListingError(res, error);
