@@ -23,6 +23,8 @@ import { PaymentCheckoutSession } from '../payments/paymentCheckoutSession.model
 import { PaymentRecord } from '../payments/paymentRecord.model';
 import { PaymentWebhookLog } from '../payments/paymentWebhookLog.model';
 import { PlatformConfiguration } from '../platformConfiguration/platformConfiguration.model';
+import { AOECase } from '../aoe/aoeCase.model';
+import { AOEDecisionProposal } from '../aoe/aoeDecisionProposal.model';
 import { Transaction } from '../transactions/transaction.model';
 import { User } from '../users/user.model';
 
@@ -143,6 +145,19 @@ export async function getAdminControlCenterDashboard() {
     activePlatformConfigurations,
     sandboxPlatformConfigurations,
     productionPlatformConfigurations,
+    openAOECases,
+    collectingEvidenceAOECases,
+    proposalGeneratedAOECases,
+    escalatedAOECases,
+    closedAOECases,
+    lowPriorityAOECases,
+    mediumPriorityAOECases,
+    highPriorityAOECases,
+    criticalPriorityAOECases,
+    generatedAOEProposals,
+    viewedAOEProposals,
+    escalatedAOEProposals,
+    closedAOEProposals,
     unresolvedAlerts,
   ] = await Promise.all([
     User.countDocuments(),
@@ -206,6 +221,19 @@ export async function getAdminControlCenterDashboard() {
     PlatformConfiguration.countDocuments({ isActive: true }),
     PlatformConfiguration.countDocuments({ environment: 'sandbox' }),
     PlatformConfiguration.countDocuments({ environment: 'production' }),
+    AOECase.countDocuments({ status: 'open' }),
+    AOECase.countDocuments({ status: 'collecting_evidence' }),
+    AOECase.countDocuments({ status: 'proposal_generated' }),
+    AOECase.countDocuments({ status: 'escalated' }),
+    AOECase.countDocuments({ status: 'closed' }),
+    AOECase.countDocuments({ priority: 'low' }),
+    AOECase.countDocuments({ priority: 'medium' }),
+    AOECase.countDocuments({ priority: 'high' }),
+    AOECase.countDocuments({ priority: 'critical' }),
+    AOEDecisionProposal.countDocuments({ status: 'generated' }),
+    AOEDecisionProposal.countDocuments({ status: 'viewed' }),
+    AOEDecisionProposal.countDocuments({ status: 'escalated' }),
+    AOEDecisionProposal.countDocuments({ status: 'closed' }),
     Audit.countDocuments({ action: { $in: alertActionNames } }),
   ]);
 
@@ -331,6 +359,21 @@ export async function getAdminControlCenterDashboard() {
       activeConfigs: activePlatformConfigurations,
       sandboxConfigs: sandboxPlatformConfigurations,
       productionConfigs: productionPlatformConfigurations,
+    },
+    aoe: {
+      openCases: openAOECases,
+      collectingEvidenceCases: collectingEvidenceAOECases,
+      proposalGeneratedCases: proposalGeneratedAOECases,
+      escalatedCases: escalatedAOECases,
+      closedCases: closedAOECases,
+      lowPriority: lowPriorityAOECases,
+      mediumPriority: mediumPriorityAOECases,
+      highPriority: highPriorityAOECases,
+      criticalPriority: criticalPriorityAOECases,
+      generatedProposals: generatedAOEProposals,
+      viewedProposals: viewedAOEProposals,
+      escalatedProposals: escalatedAOEProposals,
+      closedProposals: closedAOEProposals,
     },
     alerts,
   };

@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import { Audit } from '../audit/audit.model';
+import { observeAuctionComplianceEvent } from '../aoe/aoeCase.service';
 import { AuctionSanction } from '../auctionSanctions/auctionSanction.model';
 import { getConfigValue } from '../platformConfiguration/platformConfiguration.service';
 import { AuctionAppeal, AuctionAppealStatus } from './auctionAppeal.model';
@@ -115,6 +116,17 @@ export async function requestAuctionAppeal(input: {
       auctionAppealId: String(appeal._id),
       sanctionId: String(sanctionId),
     });
+    await observeAuctionComplianceEvent({
+      event: auctionAppealAuditActions.requested,
+      entityId: appeal._id,
+      sourceId: appeal._id,
+      summary: 'Auction sanction appeal requested',
+      metadata: {
+        sanctionId: String(sanctionId),
+        userId: String(actorId),
+      },
+      priority: 'high',
+    });
     return appeal;
   } catch (error) {
     if ((error as any)?.code === 11000) reject(409, 'auction_appeal_active_exists');
@@ -180,6 +192,22 @@ async function resolveAuctionAppeal(input: {
     auctionAppealId: String(appeal._id),
     sanctionId: String(appeal.sanctionId),
   });
+  if (input.status === 'approved' || input.status === 'rejected') {
+    await observeAuctionComplianceEvent({
+      event: input.status === 'approved'
+        ? auctionAppealAuditActions.approved
+        : auctionAppealAuditActions.rejected,
+      entityId: appeal._id,
+      sourceId: appeal._id,
+      summary: `Auction sanction appeal ${input.status}`,
+      metadata: {
+        sanctionId: String(appeal.sanctionId),
+        userId: String(appeal.userId),
+        resolution: appeal.resolution,
+      },
+      priority: 'high',
+    });
+  }
   return appeal;
 }
 

@@ -137,7 +137,43 @@ export const sandboxDefaultConfigurations: Array<{
     value: 3,
     description: 'Sandbox Auction Listing permanent sanction threshold',
   },
-];
+  {
+    key: 'aoe.enabled',
+    valueType: 'boolean',
+    value: true,
+    description: 'Sandbox AOE platform core switch',
+  },
+  {
+    key: 'aoe.collectEvidence',
+    valueType: 'boolean',
+    value: true,
+    description: 'Sandbox AOE evidence collection switch',
+  },
+  {
+    key: 'aoe.generateDecisionProposals',
+    valueType: 'boolean',
+    value: true,
+    description: 'Sandbox AOE decision proposal switch',
+  },
+  {
+    key: 'aoe.autoEscalate',
+    valueType: 'boolean',
+    value: true,
+    description: 'Sandbox AOE escalation switch',
+  },
+  {
+    key: 'aoe.minimumConfidence',
+    valueType: 'number',
+    value: 70,
+    description: 'Sandbox AOE minimum proposal confidence',
+  },
+  {
+    key: 'aoe.executionEnabled',
+    valueType: 'boolean',
+    value: false,
+    description: 'Sandbox AOE execution switch, fixed off for v1',
+    isProtected: true,
+  },];
 
 function reject(status: number, message: string): never {
   const error = new Error(message);

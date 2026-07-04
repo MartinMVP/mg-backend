@@ -19,6 +19,7 @@ import {
   listAuctionDefaultReports,
 } from './auctionDefault.repository';
 import { buildAuctionSanctionRecommendation } from '../auctionSanctions/auctionSanction.service';
+import { observeAuctionComplianceEvent } from '../aoe/aoeCase.service';
 
 export const auctionDefaultAuditActions = {
   reported: 'AUCTION_DEFAULT_REPORTED',
@@ -222,6 +223,18 @@ export async function confirmAuctionDefault(input: {
     auctionDefaultReportId: String(report._id),
     auctionListingId: String(report.auctionListingId),
     recommendation,
+  });
+  await observeAuctionComplianceEvent({
+    event: auctionDefaultAuditActions.confirmed,
+    entityId: report.auctionListingId,
+    sourceId: report._id,
+    summary: `${report.role} default confirmed for Auction Listing`,
+    metadata: {
+      auctionDefaultReportId: String(report._id),
+      resolutionType,
+      role: report.role,
+      recommendation,
+    },
   });
   return { default: report, recommendation };
 }

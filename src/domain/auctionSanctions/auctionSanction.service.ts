@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { Audit } from '../audit/audit.model';
 import { AuctionDefaultReport } from '../auctionDefaults/auctionDefault.model';
 import { countConfirmedDefaultsForUser } from '../auctionDefaults/auctionDefault.repository';
+import { observeAuctionComplianceEvent } from '../aoe/aoeCase.service';
 import { getConfigValue } from '../platformConfiguration/platformConfiguration.service';
 import { AuctionSanction, AuctionSanctionType } from './auctionSanction.model';
 
@@ -159,6 +160,19 @@ export async function applyAuctionSanction(input: {
       sourceDefaultId: String(sourceDefaultId),
       userId: String(sourceDefault.reportedUserId),
       type: sourceDefault.role,
+    });
+    await observeAuctionComplianceEvent({
+      event: auctionSanctionAuditActions.applied,
+      entityId: sanction._id,
+      sourceId: sanction._id,
+      summary: `Auction sanction applied for ${sanction.type} default`,
+      metadata: {
+        sourceDefaultId: String(sourceDefaultId),
+        userId: String(sourceDefault.reportedUserId),
+        offenseNumber: sanction.offenseNumber,
+        type: sanction.type,
+      },
+      priority: sanction.offenseNumber >= 3 ? 'high' : 'medium',
     });
     return sanction;
   } catch (error) {
