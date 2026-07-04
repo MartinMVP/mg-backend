@@ -195,7 +195,7 @@ describe('platform configuration center routes', () => {
 
     await PlatformConfiguration.deleteMany({});
     await seedSandboxDefaultConfigurations(superUser._id);
-    await expect(PlatformConfiguration.countDocuments({ environment: 'sandbox' })).resolves.toBe(12);
+    await expect(PlatformConfiguration.countDocuments({ environment: 'sandbox' })).resolves.toBe(18);
     await expect(PlatformConfiguration.countDocuments({ environment: 'production' })).resolves.toBe(0);
   });
 
@@ -384,9 +384,9 @@ describe('platform configuration center routes', () => {
       .set('Authorization', bearer(createAccessToken(admin._id, 'admin')))
       .expect(200);
     expect(dashboard.body.configurationCenter).toMatchObject({
-      totalConfigs: 12,
-      activeConfigs: 12,
-      sandboxConfigs: 12,
+      totalConfigs: 18,
+      activeConfigs: 18,
+      sandboxConfigs: 18,
       productionConfigs: 0,
     });
     expect(JSON.stringify(dashboard.body.configurationCenter)).not.toContain('dailyConversationLimit');

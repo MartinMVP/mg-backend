@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/auth';
+import { reportAuctionDefault } from '../../domain/auctionDefaults/auctionDefault.service';
 import {
   createAuctionListing,
   getAuctionListing,
@@ -83,6 +84,27 @@ router.post('/:id/bids', requireAuth, async (req, res, next) => {
       amount: req.body?.amount,
     });
     res.status(201).json(result);
+  } catch (error) {
+    try {
+      return handleAuctionListingError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.post('/:id/defaults', requireAuth, async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const report = await reportAuctionDefault({
+      auctionListingId: String(req.params.id),
+      actorId: user.sub,
+      reportedUserId: req.body?.reportedUserId,
+      category: req.body?.category,
+      description: req.body?.description,
+      evidence: req.body?.evidence,
+    });
+    res.status(201).json(report);
   } catch (error) {
     try {
       return handleAuctionListingError(res, error);

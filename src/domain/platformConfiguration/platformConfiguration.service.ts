@@ -101,6 +101,42 @@ export const sandboxDefaultConfigurations: Array<{
     value: 2500,
     description: 'Sandbox Auction Listing minimum increment tier 3',
   },
+  {
+    key: 'auction.sanctions.firstOffenseDays',
+    valueType: 'number',
+    value: 30,
+    description: 'Sandbox Auction Listing first default sanction duration in days',
+  },
+  {
+    key: 'auction.sanctions.secondOffenseDays',
+    valueType: 'number',
+    value: 180,
+    description: 'Sandbox Auction Listing second default sanction duration in days',
+  },
+  {
+    key: 'auction.sanctions.thirdOffensePolicy',
+    valueType: 'string',
+    value: 'permanent',
+    description: 'Sandbox Auction Listing third offense policy',
+  },
+  {
+    key: 'auction.sanctions.allowAppeals',
+    valueType: 'boolean',
+    value: true,
+    description: 'Sandbox Auction Listing sanction appeals switch',
+  },
+  {
+    key: 'auction.sanctions.appealWaitingDays',
+    valueType: 'number',
+    value: 365,
+    description: 'Sandbox Auction Listing sanction appeal waiting period in days',
+  },
+  {
+    key: 'auction.sanctions.permanentThreshold',
+    valueType: 'number',
+    value: 3,
+    description: 'Sandbox Auction Listing permanent sanction threshold',
+  },
 ];
 
 function reject(status: number, message: string): never {

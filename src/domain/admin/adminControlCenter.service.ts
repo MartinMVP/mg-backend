@@ -3,6 +3,9 @@ import { Animal } from '../animals/animal.model';
 import { AuctionBid } from '../auctionListings/auctionBid.model';
 import { AuctionListing } from '../auctionListings/auctionListing.model';
 import { AuctionCloseOutcome } from '../auctionOperations/auctionCloseOutcome.model';
+import { AuctionDefaultReport } from '../auctionDefaults/auctionDefault.model';
+import { AuctionSanction } from '../auctionSanctions/auctionSanction.model';
+import { AuctionAppeal } from '../auctionAppeals/auctionAppeal.model';
 import { Auction } from '../auctions/auction.model';
 import { FiscalProfile } from '../fiscalProfiles/fiscalProfile.model';
 import { InvoiceDraft } from '../invoiceDrafts/invoiceDraft.model';
@@ -125,6 +128,17 @@ export async function getAdminControlCenterDashboard() {
     completedAuctionCloseOutcomes,
     notCompletedAuctionCloseOutcomes,
     sellerUnresponsiveReports,
+    auctionDefaultsTotal,
+    auctionDefaultsPending,
+    auctionDefaultsConfirmed,
+    auctionDefaultsRejected,
+    activeAuctionSanctions,
+    expiredAuctionSanctions,
+    permanentAuctionSanctions,
+    requestedAuctionAppeals,
+    underReviewAuctionAppeals,
+    approvedAuctionAppeals,
+    rejectedAuctionAppeals,
     totalPlatformConfigurations,
     activePlatformConfigurations,
     sandboxPlatformConfigurations,
@@ -177,6 +191,17 @@ export async function getAdminControlCenterDashboard() {
     AuctionCloseOutcome.countDocuments({ outcome: 'completed' }),
     AuctionCloseOutcome.countDocuments({ outcome: 'not_completed' }),
     AuctionCloseOutcome.countDocuments({ outcome: 'seller_unresponsive' }),
+    AuctionDefaultReport.countDocuments(),
+    AuctionDefaultReport.countDocuments({ status: 'pending' }),
+    AuctionDefaultReport.countDocuments({ status: 'confirmed' }),
+    AuctionDefaultReport.countDocuments({ status: 'rejected' }),
+    AuctionSanction.countDocuments({ status: 'active' }),
+    AuctionSanction.countDocuments({ status: 'expired' }),
+    AuctionSanction.countDocuments({ status: 'active', $or: [{ endsAt: { $exists: false } }, { endsAt: null }] }),
+    AuctionAppeal.countDocuments({ status: 'requested' }),
+    AuctionAppeal.countDocuments({ status: 'under_review' }),
+    AuctionAppeal.countDocuments({ status: 'approved' }),
+    AuctionAppeal.countDocuments({ status: 'rejected' }),
     PlatformConfiguration.countDocuments(),
     PlatformConfiguration.countDocuments({ isActive: true }),
     PlatformConfiguration.countDocuments({ environment: 'sandbox' }),
@@ -283,6 +308,23 @@ export async function getAdminControlCenterDashboard() {
       completedOutcomes: completedAuctionCloseOutcomes,
       notCompletedOutcomes: notCompletedAuctionCloseOutcomes,
       sellerUnresponsiveReports,
+    },
+    auctionDefaults: {
+      total: auctionDefaultsTotal,
+      pending: auctionDefaultsPending,
+      confirmed: auctionDefaultsConfirmed,
+      rejected: auctionDefaultsRejected,
+    },
+    auctionSanctions: {
+      active: activeAuctionSanctions,
+      expired: expiredAuctionSanctions,
+      permanent: permanentAuctionSanctions,
+    },
+    auctionAppeals: {
+      requested: requestedAuctionAppeals,
+      underReview: underReviewAuctionAppeals,
+      approved: approvedAuctionAppeals,
+      rejected: rejectedAuctionAppeals,
     },
     configurationCenter: {
       totalConfigs: totalPlatformConfigurations,

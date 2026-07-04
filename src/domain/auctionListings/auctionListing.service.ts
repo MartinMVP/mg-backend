@@ -4,6 +4,7 @@ import { Animal } from '../animals/animal.model';
 import { Listing } from '../listings/listing.model';
 import { getUserMembership } from '../memberships/membership.service';
 import { createConversation, sendSystemMessage } from '../messaging/messaging.service';
+import { canCreateAuctionListing, canParticipateInAuction } from '../auctionSanctions/auctionEligibility.service';
 import { getConfigValue } from '../platformConfiguration/platformConfiguration.service';
 import { AuctionBid } from './auctionBid.model';
 import { AuctionListing, AuctionListingStatus } from './auctionListing.model';
@@ -155,6 +156,8 @@ export async function createAuctionListing(input: {
   durationDays?: unknown;
 }) {
   await assertBusinessMembership(input.actorId);
+  const sellerEligibility = await canCreateAuctionListing(input.actorId);
+  if (!sellerEligibility.allowed) reject(403, sellerEligibility.reason || 'AUCTION_SELLER_SANCTION_ACTIVE');
   const actorId = toObjectId(input.actorId);
   const listingId = toObjectId(input.listingId);
   const startingPrice = Number(input.startingPrice);
@@ -241,6 +244,8 @@ export async function placeBid(input: {
   if (String(auctionListing.sellerId) === String(bidderId)) {
     return rejectBid({ actorId: bidderId, auctionListingId, amount, reason: 'seller_cannot_bid' });
   }
+  const buyerEligibility = await canParticipateInAuction(bidderId);
+  if (!buyerEligibility.allowed) reject(403, buyerEligibility.reason || 'AUCTION_BUYER_SANCTION_ACTIVE');
   if (auctionListing.status !== 'active') {
     return rejectBid({ actorId: bidderId, auctionListingId, amount, reason: 'auction_listing_not_active' });
   }
