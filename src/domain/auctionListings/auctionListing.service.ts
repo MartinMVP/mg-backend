@@ -4,6 +4,7 @@ import { Animal } from '../animals/animal.model';
 import { Listing } from '../listings/listing.model';
 import { getUserMembership } from '../memberships/membership.service';
 import { createConversation, sendSystemMessage } from '../messaging/messaging.service';
+import { getConfigValue } from '../platformConfiguration/platformConfiguration.service';
 import { AuctionBid } from './auctionBid.model';
 import { AuctionListing, AuctionListingStatus } from './auctionListing.model';
 
@@ -21,9 +22,11 @@ export const auctionListingAuditActions = {
 const minDurationDays = 5;
 const defaultDurationDays = 7;
 const maxDurationDays = 10;
-const antiSnipingWindowMs = 5 * 60_000;
-const antiSnipingExtensionMs = 5 * 60_000;
+const antiSnipingExtensionMinutes = 5;
 const maxExtensions = 3;
+const incrementTier1 = 500;
+const incrementTier2 = 1_000;
+const incrementTier3 = 2_500;
 const defaultLimit = 20;
 const maxLimit = 100;
 
@@ -54,16 +57,58 @@ function normalizePagination(input: PaginationInput = {}) {
   return { page, limit, skip: (page - 1) * limit };
 }
 
-function normalizeDurationDays(durationDays: unknown) {
-  const parsed = Number(durationDays ?? defaultDurationDays);
-  if (!Number.isFinite(parsed)) return defaultDurationDays;
-  return Math.min(Math.max(Math.floor(parsed), minDurationDays), maxDurationDays);
+async function getAuctionConfiguration() {
+  const [
+    configuredMinDurationDays,
+    configuredMaxDurationDays,
+    configuredDefaultDurationDays,
+    configuredSnipingExtensionMinutes,
+    configuredMaxExtensions,
+    configuredIncrementTier1,
+    configuredIncrementTier2,
+    configuredIncrementTier3,
+  ] = await Promise.all([
+    getConfigValue('auction.minDurationDays', 'sandbox', minDurationDays),
+    getConfigValue('auction.maxDurationDays', 'sandbox', maxDurationDays),
+    getConfigValue('auction.defaultDurationDays', 'sandbox', defaultDurationDays),
+    getConfigValue('auction.snipingExtensionMinutes', 'sandbox', antiSnipingExtensionMinutes),
+    getConfigValue('auction.maxExtensions', 'sandbox', maxExtensions),
+    getConfigValue('auction.incrementTier1', 'sandbox', incrementTier1),
+    getConfigValue('auction.incrementTier2', 'sandbox', incrementTier2),
+    getConfigValue('auction.incrementTier3', 'sandbox', incrementTier3),
+  ]);
+
+  return {
+    minDurationDays: Number(configuredMinDurationDays),
+    maxDurationDays: Number(configuredMaxDurationDays),
+    defaultDurationDays: Number(configuredDefaultDurationDays),
+    antiSnipingExtensionMinutes: Number(configuredSnipingExtensionMinutes),
+    maxExtensions: Number(configuredMaxExtensions),
+    incrementTier1: Number(configuredIncrementTier1),
+    incrementTier2: Number(configuredIncrementTier2),
+    incrementTier3: Number(configuredIncrementTier3),
+  };
 }
 
-export function getMinimumBidIncrement(amount: number) {
-  if (amount <= 50_000) return 500;
-  if (amount <= 150_000) return 1_000;
-  return 2_500;
+function safePositiveNumber(value: number, fallback: number) {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+async function normalizeDurationDays(durationDays: unknown) {
+  const config = await getAuctionConfiguration();
+  const safeDefault = safePositiveNumber(config.defaultDurationDays, defaultDurationDays);
+  const safeMin = safePositiveNumber(config.minDurationDays, minDurationDays);
+  const safeMax = Math.max(safeMin, safePositiveNumber(config.maxDurationDays, maxDurationDays));
+  const parsed = Number(durationDays ?? safeDefault);
+  if (!Number.isFinite(parsed)) return safeDefault;
+  return Math.min(Math.max(Math.floor(parsed), safeMin), safeMax);
+}
+
+export async function getMinimumBidIncrement(amount: number) {
+  const config = await getAuctionConfiguration();
+  if (amount <= 50_000) return safePositiveNumber(config.incrementTier1, incrementTier1);
+  if (amount <= 150_000) return safePositiveNumber(config.incrementTier2, incrementTier2);
+  return safePositiveNumber(config.incrementTier3, incrementTier3);
 }
 
 async function audit(actor: string, action: string, auctionListingId: Types.ObjectId, payload?: Record<string, unknown>) {
@@ -132,7 +177,7 @@ export async function createAuctionListing(input: {
   if (existing) reject(409, 'auction_listing_already_exists');
 
   const now = new Date();
-  const durationDays = normalizeDurationDays(input.durationDays);
+  const durationDays = await normalizeDurationDays(input.durationDays);
   const auctionListing = await AuctionListing.create({
     listingId: listing._id,
     sellerId,
@@ -208,7 +253,7 @@ export async function placeBid(input: {
   const latestValidBid = await AuctionBid.findOne({ auctionListingId, status: 'valid' })
     .sort({ amount: -1, createdAt: -1 });
   const minimumAmount = latestValidBid
-    ? auctionListing.currentPrice + getMinimumBidIncrement(auctionListing.currentPrice)
+    ? auctionListing.currentPrice + await getMinimumBidIncrement(auctionListing.currentPrice)
     : auctionListing.startingPrice;
   if (amount < minimumAmount) {
     return rejectBid({ actorId: bidderId, auctionListingId, amount, reason: 'bid_amount_too_low' });
@@ -221,9 +266,14 @@ export async function placeBid(input: {
     status: 'valid',
   });
 
+  const config = await getAuctionConfiguration();
+  const extensionMinutes = safePositiveNumber(config.antiSnipingExtensionMinutes, antiSnipingExtensionMinutes);
+  const antiSnipingWindowMs = extensionMinutes * 60_000;
+  const antiSnipingExtensionMs = extensionMinutes * 60_000;
+  const configuredMaxExtensions = Math.max(0, Math.floor(safePositiveNumber(config.maxExtensions, maxExtensions)));
   const set: Record<string, unknown> = { currentPrice: amount };
   const shouldExtend = auctionListing.endsAt.getTime() - now.getTime() <= antiSnipingWindowMs
-    && auctionListing.extensionCount < maxExtensions;
+    && auctionListing.extensionCount < configuredMaxExtensions;
   if (shouldExtend) {
     set.endsAt = new Date(auctionListing.endsAt.getTime() + antiSnipingExtensionMs);
     set.extensionCount = auctionListing.extensionCount + 1;

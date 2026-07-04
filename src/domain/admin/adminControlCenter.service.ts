@@ -19,6 +19,7 @@ import { DunningState } from '../payments/dunningState.model';
 import { PaymentCheckoutSession } from '../payments/paymentCheckoutSession.model';
 import { PaymentRecord } from '../payments/paymentRecord.model';
 import { PaymentWebhookLog } from '../payments/paymentWebhookLog.model';
+import { PlatformConfiguration } from '../platformConfiguration/platformConfiguration.model';
 import { Transaction } from '../transactions/transaction.model';
 import { User } from '../users/user.model';
 
@@ -124,6 +125,10 @@ export async function getAdminControlCenterDashboard() {
     completedAuctionCloseOutcomes,
     notCompletedAuctionCloseOutcomes,
     sellerUnresponsiveReports,
+    totalPlatformConfigurations,
+    activePlatformConfigurations,
+    sandboxPlatformConfigurations,
+    productionPlatformConfigurations,
     unresolvedAlerts,
   ] = await Promise.all([
     User.countDocuments(),
@@ -172,6 +177,10 @@ export async function getAdminControlCenterDashboard() {
     AuctionCloseOutcome.countDocuments({ outcome: 'completed' }),
     AuctionCloseOutcome.countDocuments({ outcome: 'not_completed' }),
     AuctionCloseOutcome.countDocuments({ outcome: 'seller_unresponsive' }),
+    PlatformConfiguration.countDocuments(),
+    PlatformConfiguration.countDocuments({ isActive: true }),
+    PlatformConfiguration.countDocuments({ environment: 'sandbox' }),
+    PlatformConfiguration.countDocuments({ environment: 'production' }),
     Audit.countDocuments({ action: { $in: alertActionNames } }),
   ]);
 
@@ -274,6 +283,12 @@ export async function getAdminControlCenterDashboard() {
       completedOutcomes: completedAuctionCloseOutcomes,
       notCompletedOutcomes: notCompletedAuctionCloseOutcomes,
       sellerUnresponsiveReports,
+    },
+    configurationCenter: {
+      totalConfigs: totalPlatformConfigurations,
+      activeConfigs: activePlatformConfigurations,
+      sandboxConfigs: sandboxPlatformConfigurations,
+      productionConfigs: productionPlatformConfigurations,
     },
     alerts,
   };

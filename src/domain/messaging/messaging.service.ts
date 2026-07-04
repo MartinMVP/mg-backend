@@ -5,6 +5,7 @@ import { getUserMembership } from '../memberships/membership.service';
 import { Conversation, ConversationStatus, ConversationType } from './conversation.model';
 import { ConversationParticipant } from './conversationParticipant.model';
 import { Message, MessageSource } from './message.model';
+import { getConfigValue } from '../platformConfiguration/platformConfiguration.service';
 
 export const messagingAuditActions = {
   conversationCreated: 'CONVERSATION_CREATED',
@@ -16,7 +17,6 @@ export const messagingAuditActions = {
   systemMessageCreated: 'SYSTEM_MESSAGE_CREATED',
 } as const;
 
-// TODO: migrar a Platform Configuration Center
 export const conversationDailyLimitsByPlan = {
   free: 10,
   pro: 50,
@@ -108,7 +108,12 @@ async function audit(actor: string, action: string, conversationId: Types.Object
 async function enforceConversationLimit(userId: string | Types.ObjectId) {
   const { plan } = await getUserMembership(userId);
   const planCode = normalizePlanCode(plan?.code);
-  const limit = conversationDailyLimitsByPlan[planCode];
+  const configuredLimit = await getConfigValue(
+    `messaging.${planCode}.dailyConversationLimit`,
+    'sandbox',
+    conversationDailyLimitsByPlan[planCode]
+  );
+  const limit = Number(configuredLimit);
   const count = await Conversation.countDocuments({
     createdBy: toObjectId(userId),
     createdAt: { $gte: dayStart() },
