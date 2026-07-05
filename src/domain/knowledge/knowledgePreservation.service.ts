@@ -1,5 +1,13 @@
 import { Audit } from '../audit/audit.model';
-import { CreateKnowledgeRecordInput, KnowledgeDomain, KnowledgeRecordVersionChanges } from './knowledge.types';
+import {
+  CreateKnowledgeAssetInput,
+  CreateKnowledgeCollectionInput,
+  CreateKnowledgeRecordInput,
+  KnowledgeDomain,
+  KnowledgeRecordVersionChanges,
+} from './knowledge.types';
+import { createKnowledgeAsset } from './knowledgeAsset.service';
+import { createKnowledgeCollection } from './knowledgeCollection.service';
 import { createKnowledgeRecord, createKnowledgeRecordVersion } from './knowledgeRecord.service';
 import { registerKnowledgeRecord } from './knowledgeRegistry.service';
 
@@ -30,4 +38,31 @@ export async function versionKnowledgeRecord(
   actorId?: string
 ) {
   return createKnowledgeRecordVersion({ previousRecordId: recordId, changes, actorId });
+}
+
+export async function organizeKnowledge(input: CreateKnowledgeCollectionInput & { actorId?: string }) {
+  return createKnowledgeCollection(input);
+}
+
+export async function governKnowledge(input: CreateKnowledgeAssetInput & { actorId?: string }) {
+  return createKnowledgeAsset(input);
+}
+
+export async function curateKnowledge(input: CreateKnowledgeAssetInput & { actorId?: string }) {
+  return createKnowledgeAsset(input);
+}
+
+export async function reviewKnowledge(input: {
+  subjectId: string;
+  subjectType: 'record' | 'collection' | 'asset';
+  reviewer: string;
+  notes?: string;
+}) {
+  await auditKnowledgeAction('KNOWLEDGE_REVIEW_RECORDED', input.reviewer, input);
+  return {
+    reviewed: true,
+    subjectId: input.subjectId,
+    subjectType: input.subjectType,
+    reviewer: input.reviewer,
+  };
 }

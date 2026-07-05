@@ -40,6 +40,48 @@ export const knowledgeStorageTypes = [
 ] as const;
 export type KnowledgeStorageType = typeof knowledgeStorageTypes[number];
 
+export const knowledgeCollectionTypes = [
+  'case',
+  'pattern',
+  'incident',
+  'investigation',
+  'workflow',
+  'operational_history',
+] as const;
+export type KnowledgeCollectionType = typeof knowledgeCollectionTypes[number];
+
+export const knowledgeAssetTypes = [
+  'operational_pattern',
+  'business_pattern',
+  'compliance_pattern',
+  'platform_pattern',
+  'engineering_pattern',
+] as const;
+export type KnowledgeAssetType = typeof knowledgeAssetTypes[number];
+
+export const knowledgeQualityLevels = ['candidate', 'observed', 'validated', 'trusted', 'authoritative'] as const;
+export type KnowledgeQualityLevel = typeof knowledgeQualityLevels[number];
+
+export const knowledgeLifecycleStages = ['candidate', 'validated', 'approved', 'reusable', 'deprecated', 'archived'] as const;
+export type KnowledgeLifecycleStage = typeof knowledgeLifecycleStages[number];
+
+export const knowledgeRegistryStatuses = ['active', 'deprecated', 'archived'] as const;
+export type KnowledgeRegistryStatus = typeof knowledgeRegistryStatuses[number];
+
+export interface KnowledgeQuality {
+  level: KnowledgeQualityLevel;
+  score: number;
+  rationale: string;
+  evaluatedAt: Date;
+}
+
+export interface KnowledgeLifecycle {
+  stage: KnowledgeLifecycleStage;
+  enteredAt: Date;
+  updatedAt: Date;
+  reason?: string | null;
+}
+
 export interface KnowledgeSourceEvidence {
   sourceType: KnowledgeSourceType;
   sourceId?: Types.ObjectId | string | null;
@@ -83,4 +125,27 @@ export interface KnowledgeRecordVersionChanges {
   sourceId?: Types.ObjectId | string | null;
   provenance?: Partial<KnowledgeProvenance>;
   producer?: string;
+}
+
+export interface CreateKnowledgeCollectionInput {
+  collectionType: KnowledgeCollectionType;
+  title: string;
+  description: string;
+  knowledgeRecords: Types.ObjectId[] | string[];
+  ownerDomain: string;
+  knowledgeSteward: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CreateKnowledgeAssetInput {
+  assetType: KnowledgeAssetType;
+  title: string;
+  description: string;
+  collections: Types.ObjectId[] | string[];
+  domain: string;
+  ownerDomain: string;
+  knowledgeSteward: string;
+  quality?: KnowledgeQuality;
+  lifecycle?: KnowledgeLifecycle;
+  version?: number;
 }

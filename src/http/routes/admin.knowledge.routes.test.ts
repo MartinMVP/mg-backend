@@ -222,8 +222,9 @@ describe('admin knowledge foundation routes', () => {
   it('does not implement Knowledge Asset, Collections, advanced query, AOE integration or AI surfaces', async () => {
     const { header } = await auth('admin');
 
-    await request(app).get('/admin/knowledge/assets').set('Authorization', header).expect(404);
-    await request(app).get('/admin/knowledge/collections').set('Authorization', header).expect(404);
+    await request(app).get('/admin/knowledge/assets').set('Authorization', header).expect(200);
+    await request(app).post('/admin/knowledge/assets').set('Authorization', header).send({}).expect(404);
+    await request(app).get('/admin/knowledge/collections').set('Authorization', header).expect(200);
     await request(app).post('/admin/knowledge/query').set('Authorization', header).send({}).expect(404);
 
     const created = await createKnowledgeRecord(knowledgePayload({ actorId: 'system' }) as any);

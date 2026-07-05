@@ -28,6 +28,9 @@ import { AOEDecisionProposal } from '../aoe/aoeDecisionProposal.model';
 import { AOEOperationalDecisionPackage } from '../aoeOperationalDecisions/aoeOperationalDecision.model';
 import { AnalyticsEvent } from '../analytics/analyticsEvent.model';
 import { getAnalyticsQualityTrend, getAnalyticsReadiness } from '../analytics/analyticsQuality.service';
+import { KnowledgeAsset } from '../knowledge/knowledgeAsset.model';
+import { KnowledgeCollection } from '../knowledge/knowledgeCollection.model';
+import { getKnowledgeManagementMetrics } from '../knowledge/knowledgeMetrics.service';
 import { KnowledgeRecord } from '../knowledge/knowledgeRecord.model';
 import { KnowledgeRegistry } from '../knowledge/knowledgeRegistry.model';
 import { Transaction } from '../transactions/transaction.model';
@@ -185,6 +188,9 @@ export async function getAdminControlCenterDashboard() {
     recordsByKnowledgeDomain,
     recordsByKnowledgeSourceType,
     latestVersionedKnowledgeRecords,
+    totalKnowledgeCollections,
+    totalKnowledgeAssets,
+    knowledgeManagementMetrics,
     unresolvedAlerts,
   ] = await Promise.all([
     User.countDocuments(),
@@ -302,7 +308,11 @@ export async function getAdminControlCenterDashboard() {
       .sort({ createdAt: -1 })
       .limit(10)
       .select('_id knowledgeDomain knowledgeType version createdAt')
-      .lean(),    Audit.countDocuments({ action: { $in: alertActionNames } }),
+      .lean(),
+    KnowledgeCollection.countDocuments(),
+    KnowledgeAsset.countDocuments(),
+    getKnowledgeManagementMetrics(),
+    Audit.countDocuments({ action: { $in: alertActionNames } }),
   ]);
 
   const membershipsHealth: HealthStatus = suspended > 0 || inDunning > 0 ? 'warning' : 'healthy';
@@ -479,6 +489,18 @@ export async function getAdminControlCenterDashboard() {
         createdAt: isoDate(record.createdAt),
       })),
     },
+    knowledgeManagement: {
+      records: totalKnowledgeRecords,
+      collections: totalKnowledgeCollections,
+      assets: totalKnowledgeAssets,
+      byDomain: knowledgeManagementMetrics.byDomain,
+      byQuality: knowledgeManagementMetrics.byQuality,
+      byLifecycle: knowledgeManagementMetrics.byLifecycle,
+      reusable: knowledgeManagementMetrics.reusableKnowledge,
+      authoritative: knowledgeManagementMetrics.authoritativeKnowledge,
+      coverage: knowledgeManagementMetrics.coverage,
+      freshness: knowledgeManagementMetrics.freshness,
+    },
     analyticsQuality: {
       score: analyticsQualityReadiness.overallScore,
       classification: analyticsQualityReadiness.classification,
@@ -580,6 +602,8 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
+
 
 
 

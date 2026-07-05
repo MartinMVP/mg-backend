@@ -5,6 +5,16 @@ import {
   getKnowledgeRecord,
   listKnowledgeRecords,
 } from '../../domain/knowledge/knowledgeRecord.service';
+import {
+  createKnowledgeCollection,
+  getKnowledgeCollection,
+  listKnowledgeCollections,
+} from '../../domain/knowledge/knowledgeCollection.service';
+import {
+  getKnowledgeAsset,
+  listKnowledgeAssets,
+} from '../../domain/knowledge/knowledgeAsset.service';
+import { getKnowledgeManagementMetrics } from '../../domain/knowledge/knowledgeMetrics.service';
 import { listKnowledgeRegistry } from '../../domain/knowledge/knowledgeRegistry.service';
 import { requireAuth } from '../middlewares/auth';
 import { requireRole } from '../middlewares/requireRole';
@@ -67,6 +77,96 @@ router.get('/knowledge/registry', async (req, res, next) => {
     } catch (nextError) {
       return next(nextError);
     }
+  }
+});
+
+router.get('/knowledge/collections', async (req, res, next) => {
+  try {
+    const result = await listKnowledgeCollections({
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    res.json(result);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/collections/:id', async (req, res, next) => {
+  try {
+    const collection = await getKnowledgeCollection(String(req.params.id));
+    res.json(collection);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.post('/knowledge/collections', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const collection = await createKnowledgeCollection({
+      collectionType: req.body?.collectionType,
+      title: req.body?.title,
+      description: req.body?.description,
+      knowledgeRecords: req.body?.knowledgeRecords,
+      ownerDomain: req.body?.ownerDomain,
+      knowledgeSteward: req.body?.knowledgeSteward,
+      metadata: req.body?.metadata,
+      actorId: user.sub,
+    });
+    res.status(201).json(collection);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/assets', async (req, res, next) => {
+  try {
+    const result = await listKnowledgeAssets({
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    res.json(result);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/assets/:id', async (req, res, next) => {
+  try {
+    const asset = await getKnowledgeAsset(String(req.params.id));
+    res.json(asset);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/metrics', async (_req, res, next) => {
+  try {
+    const metrics = await getKnowledgeManagementMetrics();
+    res.json(metrics);
+  } catch (error) {
+    return next(error);
   }
 });
 
