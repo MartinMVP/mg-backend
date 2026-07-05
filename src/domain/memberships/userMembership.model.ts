@@ -1,6 +1,8 @@
 import { Schema, model, Types } from 'mongoose';
 
 export const membershipStatuses = [
+  'draft',
+  'pending_activation',
   'pending_payment',
   'active',
   'payment_failed',
@@ -36,6 +38,9 @@ export interface IUserMembership {
   graceEndsAt?: Date;
   suspendedAt?: Date;
   cancelledAt?: Date;
+  expiresAt?: Date;
+  activatedAt?: Date;
+  metadata?: Record<string, unknown>;
   cancelAtPeriodEnd?: boolean;
   cancelScheduledAt?: Date;
   cancelReason?: string;
@@ -52,7 +57,7 @@ const userMembershipSchema = new Schema<IUserMembership>(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     planId: { type: Schema.Types.ObjectId, ref: 'MembershipPlan', required: true },
-    status: { type: String, enum: membershipStatuses, default: 'pending_payment', index: true },
+    status: { type: String, enum: membershipStatuses, default: 'pending_activation', index: true },
     startsAt: { type: Date, required: true },
     currentPeriodStart: { type: Date, required: true },
     currentPeriodEnd: { type: Date, required: true },
@@ -66,6 +71,9 @@ const userMembershipSchema = new Schema<IUserMembership>(
     graceEndsAt: Date,
     suspendedAt: Date,
     cancelledAt: Date,
+    expiresAt: Date,
+    activatedAt: Date,
+    metadata: { type: Schema.Types.Mixed },
     cancelAtPeriodEnd: { type: Boolean, default: false, index: true },
     cancelScheduledAt: Date,
     cancelReason: { type: String, trim: true },
@@ -92,3 +100,5 @@ userMembershipSchema.index(
 );
 
 export const UserMembership = model<IUserMembership>('UserMembership', userMembershipSchema);
+
+

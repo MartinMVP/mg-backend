@@ -376,10 +376,152 @@ paths:
         '400': { description: Too low }
         '409': { description: Not live / race condition }
 
+
+
+  /membership/plans:
+    get:
+      summary: List membership plans (admin/super)
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: OK } }
+    post:
+      summary: Create membership plan (admin/super)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name]
+              properties:
+                code: { type: string }
+                name: { type: string }
+                description: { type: string }
+                monthlyPrice: { type: number }
+                yearlyPrice: { type: number }
+                durationDays: { type: integer }
+                benefits: { type: object }
+                limits: { type: object }
+      responses: { '201': { description: Created } }
+
+  /membership/plans/{id}:
+    patch:
+      summary: Update, activate, or deactivate membership plan (admin/super)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses: { '200': { description: OK } }
+
+  /memberships:
+    get:
+      summary: List memberships (admin/super)
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: OK } }
+    post:
+      summary: Create membership pending administrative activation (admin/super)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, planId]
+              properties:
+                userId: { type: string }
+                planId: { type: string }
+                startsAt: { type: string, format: date-time }
+                metadata: { type: object }
+      responses: { '201': { description: Created } }
+
+  /memberships/{id}:
+    get:
+      summary: Get membership with benefits and history (admin/super)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: OK } }
+
+  /memberships/{id}/activate:
+    patch:
+      summary: Activate membership administratively (admin/super)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: OK } }
+
+  /memberships/{id}/suspend:
+    patch:
+      summary: Suspend membership (admin/super)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: OK } }
+
+  /memberships/{id}/reactivate:
+    patch:
+      summary: Reactivate suspended membership (admin/super)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: OK } }
+
+  /memberships/{id}/cancel:
+    patch:
+      summary: Cancel membership (admin/super)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: OK } }
+
+  /memberships/{id}/expire:
+    patch:
+      summary: Expire membership (admin/super)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: OK } }
+
+  /memberships/{id}/history:
+    get:
+      summary: Get membership history (admin/super)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: OK } }
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-
+

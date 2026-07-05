@@ -13,6 +13,7 @@ import { InvoiceQueue } from '../invoiceQueue/invoiceQueue.model';
 import { Listing } from '../listings/listing.model';
 import { MembershipChangeLog } from '../memberships/membershipChangeLog.model';
 import { MembershipPlan } from '../memberships/membershipPlan.model';
+import { MembershipBenefit } from '../memberships/membershipBenefit.model';
 import { UserMembership } from '../memberships/userMembership.model';
 import { Conversation } from '../messaging/conversation.model';
 import { ConversationParticipant } from '../messaging/conversationParticipant.model';
@@ -98,6 +99,13 @@ export async function getAdminControlCenterDashboard() {
     totalUsers,
     admins,
     newUsersLast30Days,
+    membershipFoundationPlans,
+    membershipFoundationMemberships,
+    membershipFoundationActiveMemberships,
+    membershipFoundationExpiredMemberships,
+    membershipFoundationSuspendedMemberships,
+    membershipFoundationBenefitsGranted,
+    membershipFoundationBenefitsConsumed,
     activeMemberships,
     freeMemberships,
     paidMemberships,
@@ -207,6 +215,15 @@ export async function getAdminControlCenterDashboard() {
     User.countDocuments(),
     User.countDocuments({ role: { $in: ['admin', 'super'] } }),
     User.countDocuments({ createdAt: { $gte: thirtyDaysAgo } }),
+    MembershipPlan.countDocuments(),
+    UserMembership.countDocuments(),
+    UserMembership.countDocuments({ status: 'active' }),
+    UserMembership.countDocuments({ status: 'expired' }),
+    UserMembership.countDocuments({ status: 'suspended' }),
+    MembershipBenefit.countDocuments(),
+    MembershipBenefit.aggregate<{ _id: null; consumed: number }>([
+      { $group: { _id: null, consumed: { $sum: '$consumed' } } },
+    ]),
     UserMembership.countDocuments({ status: 'active' }),
     UserMembership.countDocuments({ planId: { $in: freePlanIds } }),
     UserMembership.countDocuments({ planId: { $in: paidPlanIds } }),
@@ -382,6 +399,15 @@ export async function getAdminControlCenterDashboard() {
       suspendedUsers: 0,
       admins,
       newUsersLast30Days,
+    },
+    membershipFoundation: {
+      plans: membershipFoundationPlans,
+      memberships: membershipFoundationMemberships,
+      activeMemberships: membershipFoundationActiveMemberships,
+      expiredMemberships: membershipFoundationExpiredMemberships,
+      suspendedMemberships: membershipFoundationSuspendedMemberships,
+      benefitsGranted: membershipFoundationBenefitsGranted,
+      benefitsConsumed: membershipFoundationBenefitsConsumed[0]?.consumed || 0,
     },
     memberships: {
       activeMemberships,
@@ -651,6 +677,7 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
 
 
 

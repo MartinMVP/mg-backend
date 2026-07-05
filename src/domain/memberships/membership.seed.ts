@@ -15,10 +15,14 @@ export const defaultMembershipPlans = [
     name: 'Free',
     code: 'free',
     description: 'Membresía básica gratuita para comenzar en Enlace Ganadero.',
+    monthlyPrice: 0,
+    yearlyPrice: 0,
+    durationDays: 365,
     price: 0,
     currency: 'MXN' as const,
     billingPeriod: 'manual' as const,
     benefits: freeMembershipBenefits,
+    limits: { animalListings: 1, auctionListings: 0, mediaUploads: 3, messaging: 100, featuredPublications: 0 },
     isActive: true,
     isPublic: true,
     sortOrder: 0,
@@ -27,6 +31,9 @@ export const defaultMembershipPlans = [
     name: 'Pro',
     code: 'pro',
     description: 'Plan Pro preparado para beneficios avanzados futuros.',
+    monthlyPrice: 0,
+    yearlyPrice: 0,
+    durationDays: 365,
     price: 0,
     currency: 'MXN' as const,
     billingPeriod: 'manual' as const,
@@ -40,6 +47,7 @@ export const defaultMembershipPlans = [
       canAccessMetrics: true,
       supportLevel: 'priority' as const,
     },
+    limits: { animalListings: 10, auctionListings: 10, mediaUploads: 8, messaging: 500, featuredPublications: 2 },
     isActive: true,
     isPublic: false,
     sortOrder: 10,
@@ -48,6 +56,9 @@ export const defaultMembershipPlans = [
     name: 'Business',
     code: 'business',
     description: 'Plan Business preparado para operaciones comerciales futuras.',
+    monthlyPrice: 0,
+    yearlyPrice: 0,
+    durationDays: 365,
     price: 0,
     currency: 'MXN' as const,
     billingPeriod: 'manual' as const,
@@ -61,6 +72,7 @@ export const defaultMembershipPlans = [
       canAccessMetrics: true,
       supportLevel: 'priority' as const,
     },
+    limits: { animalListings: 50, auctionListings: 50, mediaUploads: 12, messaging: 2000, featuredPublications: 10 },
     isActive: true,
     isPublic: false,
     sortOrder: 20,
@@ -78,3 +90,5 @@ export async function ensureDefaultMembershipPlans() {
 
   return MembershipPlan.findOne({ code: 'free' });
 }
+
+

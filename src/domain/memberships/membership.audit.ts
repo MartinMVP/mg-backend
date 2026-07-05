@@ -6,6 +6,9 @@ export const membershipAuditActions = {
   activated: 'MEMBERSHIP_ACTIVATED',
   suspended: 'MEMBERSHIP_SUSPENDED',
   cancelled: 'MEMBERSHIP_CANCELLED',
+  expired: 'MEMBERSHIP_EXPIRED',
+  benefitGranted: 'BENEFIT_GRANTED',
+  benefitConsumed: 'BENEFIT_CONSUMED',
   limitReached: 'MEMBERSHIP_LIMIT_REACHED',
   capacityConsumed: 'MEMBERSHIP_CAPACITY_CONSUMED',
   capacityReleased: 'MEMBERSHIP_CAPACITY_RELEASED',
@@ -30,3 +33,5 @@ export const membershipAuditActions = {
   cancellationCompletedNotice: 'MEMBERSHIP_CANCELLATION_COMPLETED_NOTICE',
   reactivationNotice: 'MEMBERSHIP_REACTIVATION_NOTICE',
 } as const;
+
+

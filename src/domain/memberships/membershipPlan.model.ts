@@ -17,10 +17,14 @@ export interface IMembershipPlan {
   name: string;
   code: string;
   description?: string;
+  monthlyPrice?: number;
+  yearlyPrice?: number;
+  durationDays?: number;
   price: number;
   currency: 'MXN';
   billingPeriod: MembershipBillingPeriod;
   benefits: MembershipBenefits;
+  limits?: Record<string, number>;
   isActive: boolean;
   isPublic: boolean;
   trialDays?: number;
@@ -48,10 +52,14 @@ const membershipPlanSchema = new Schema<IMembershipPlan>(
     name: { type: String, required: true, trim: true },
     code: { type: String, required: true, unique: true, lowercase: true, trim: true },
     description: { type: String, trim: true },
+    monthlyPrice: { type: Number, min: 0 },
+    yearlyPrice: { type: Number, min: 0 },
+    durationDays: { type: Number, min: 1 },
     price: { type: Number, required: true, min: 0 },
     currency: { type: String, enum: ['MXN'], default: 'MXN', required: true },
     billingPeriod: { type: String, enum: ['monthly', 'annual', 'manual'], required: true },
     benefits: { type: benefitsSchema, required: true },
+    limits: { type: Schema.Types.Mixed },
     isActive: { type: Boolean, default: true, index: true },
     isPublic: { type: Boolean, default: true, index: true },
     trialDays: { type: Number, min: 0 },
@@ -66,3 +74,5 @@ membershipPlanSchema.pre('validate', function () {
 });
 
 export const MembershipPlan = model<IMembershipPlan>('MembershipPlan', membershipPlanSchema);
+
+
