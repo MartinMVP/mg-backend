@@ -32,6 +32,8 @@ import { KnowledgeAsset } from '../knowledge/knowledgeAsset.model';
 import { KnowledgeCollection } from '../knowledge/knowledgeCollection.model';
 import { getKnowledgeManagementMetrics } from '../knowledge/knowledgeMetrics.service';
 import { getKnowledgeUtilizationMetrics } from '../knowledge/knowledgeUtilizationMetrics.service';
+import { KnowledgeValidation } from '../knowledge/knowledgeValidation.model';
+import { KnowledgeDrift } from '../knowledge/knowledgeDrift.model';
 import { KnowledgeRecord } from '../knowledge/knowledgeRecord.model';
 import { KnowledgeRegistry } from '../knowledge/knowledgeRegistry.model';
 import { Transaction } from '../transactions/transaction.model';
@@ -193,6 +195,13 @@ export async function getAdminControlCenterDashboard() {
     totalKnowledgeAssets,
     knowledgeManagementMetrics,
     knowledgeUtilizationMetrics,
+    totalKnowledgeValidations,
+    avgKnowledgeValidationScore,
+    knowledgeValidationByDomain,
+    knowledgeValidationByClassification,
+    knowledgeDriftDetected,
+    avgKnowledgeStability,
+    authoritativeKnowledgeCandidates,
     unresolvedAlerts,
   ] = await Promise.all([
     User.countDocuments(),
@@ -315,6 +324,23 @@ export async function getAdminControlCenterDashboard() {
     KnowledgeAsset.countDocuments(),
     getKnowledgeManagementMetrics(),
     getKnowledgeUtilizationMetrics(),
+    KnowledgeValidation.countDocuments(),
+    KnowledgeValidation.aggregate<{ _id: null; avgScore: number }>([
+      { $group: { _id: null, avgScore: { $avg: '$validationScore.overall' } } },
+    ]),
+    KnowledgeValidation.aggregate<{ _id: string; count: number }>([
+      { $lookup: { from: 'outcomeregistries', localField: 'outcomeId', foreignField: '_id', as: 'outcome' } },
+      { $unwind: '$outcome' },
+      { $group: { _id: '$outcome.sourceDomain', count: { $sum: 1 } } },
+    ]),
+    KnowledgeValidation.aggregate<{ _id: string; count: number }>([
+      { $group: { _id: '$validationResult', count: { $sum: 1 } } },
+    ]),
+    KnowledgeDrift.countDocuments({ driftDetected: true }),
+    KnowledgeValidation.aggregate<{ _id: null; stability: number }>([
+      { $group: { _id: null, stability: { $avg: '$validationScore.overall' } } },
+    ]),
+    KnowledgeValidation.countDocuments({ validationResult: 'confirmed', 'validationScore.overall': { $gte: 85 } }),
     Audit.countDocuments({ action: { $in: alertActionNames } }),
   ]);
 
@@ -514,6 +540,16 @@ export async function getAdminControlCenterDashboard() {
       reuseRate: knowledgeUtilizationMetrics.knowledgeReuseRate,
       coverage: knowledgeUtilizationMetrics.knowledgeCoverage,
     },
+    knowledgeValidation: {
+      totalValidations: totalKnowledgeValidations,
+      validationRate: knowledgeUtilizationMetrics.totalPackages > 0 ? totalKnowledgeValidations / knowledgeUtilizationMetrics.totalPackages : 0,
+      validationScore: avgKnowledgeValidationScore[0]?.avgScore || 0,
+      byDomain: knowledgeValidationByDomain.map((item) => ({ domain: item._id, count: item.count })),
+      byClassification: knowledgeValidationByClassification.map((item) => ({ classification: item._id, count: item.count })),
+      driftDetected: knowledgeDriftDetected,
+      stabilityAverage: avgKnowledgeStability[0]?.stability || 0,
+      authoritativeCandidates: authoritativeKnowledgeCandidates,
+    },
     analyticsQuality: {
       score: analyticsQualityReadiness.overallScore,
       classification: analyticsQualityReadiness.classification,
@@ -615,6 +651,9 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
+
+
 
 
 

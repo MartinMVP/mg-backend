@@ -22,6 +22,18 @@ import {
 } from '../../domain/knowledge/knowledgeResolution.service';
 import { getKnowledgeUtilizationMetrics } from '../../domain/knowledge/knowledgeUtilizationMetrics.service';
 import { listKnowledgeRegistry } from '../../domain/knowledge/knowledgeRegistry.service';
+import {
+  getOutcome,
+  listOutcomeRegistry,
+  registerOutcome,
+} from '../../domain/knowledge/knowledgeOutcome.service';
+import {
+  getValidation,
+  getValidationHistory,
+  listDrift,
+  listValidations,
+  validateKnowledge,
+} from '../../domain/knowledge/knowledgeValidation.service';
 import { requireAuth } from '../middlewares/auth';
 import { requireRole } from '../middlewares/requireRole';
 
@@ -226,6 +238,121 @@ router.get('/knowledge/snapshots/:id', async (req, res, next) => {
   try {
     const snapshot = await getKnowledgeSnapshot(String(req.params.id));
     res.json(snapshot);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/validations', async (req, res, next) => {
+  try {
+    res.json(await listValidations({ page: req.query.page, limit: req.query.limit }));
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/validations/:id', async (req, res, next) => {
+  try {
+    res.json(await getValidation(String(req.params.id)));
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.post('/knowledge/validate', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const result = await validateKnowledge({
+      packageId: req.body?.packageId,
+      snapshotId: req.body?.snapshotId,
+      outcomeId: req.body?.outcomeId,
+      validationLevel: req.body?.validationLevel,
+      validationMethod: req.body?.validationMethod,
+      validatedBy: user.sub,
+      actorId: user.sub,
+      policy: req.body?.policy,
+    });
+    res.status(201).json(result);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/outcomes', async (req, res, next) => {
+  try {
+    res.json(await listOutcomeRegistry({ page: req.query.page, limit: req.query.limit }));
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/outcomes/:id', async (req, res, next) => {
+  try {
+    res.json(await getOutcome(String(req.params.id)));
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.post('/knowledge/outcomes', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const outcome = await registerOutcome({
+      tenantId: req.body?.tenantId,
+      outcomeType: req.body?.outcomeType,
+      sourceDomain: req.body?.sourceDomain,
+      sourceId: req.body?.sourceId,
+      businessOutcome: req.body?.businessOutcome,
+      operationalOutcome: req.body?.operationalOutcome,
+      knowledgeOutcome: req.body?.knowledgeOutcome,
+      metadata: req.body?.metadata,
+      actorId: user.sub,
+    });
+    res.status(201).json(outcome);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/drift', async (_req, res, next) => {
+  try {
+    res.json(await listDrift());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get('/knowledge/history/:id', async (req, res, next) => {
+  try {
+    res.json(await getValidationHistory(String(req.params.id)));
   } catch (error) {
     try {
       return handleKnowledgeError(res, error);

@@ -11,6 +11,7 @@ import { createKnowledgeCollection } from './knowledgeCollection.service';
 import { createKnowledgeRecord, createKnowledgeRecordVersion } from './knowledgeRecord.service';
 import { registerKnowledgeRecord } from './knowledgeRegistry.service';
 import { resolveKnowledge } from './knowledgeResolution.service';
+import { validateKnowledge } from './knowledgeValidation.service';
 
 export async function classifyKnowledgeRecord(input: Pick<CreateKnowledgeRecordInput, 'knowledgeDomain'>) {
   const reusableDomains: KnowledgeDomain[] = ['commercial_listing', 'commercial_transaction'];
@@ -79,4 +80,8 @@ export async function observeKnowledge(input: {
 }) {
   await auditKnowledgeAction('KNOWLEDGE_UTILIZATION_OBSERVED', input.observer, input);
   return { observed: true, packageId: input.packageId, observer: input.observer };
+}
+
+export async function validatePreservedKnowledge(input: Parameters<typeof validateKnowledge>[0]) {
+  return validateKnowledge(input);
 }
