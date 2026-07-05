@@ -28,6 +28,8 @@ import { AOEDecisionProposal } from '../aoe/aoeDecisionProposal.model';
 import { AOEOperationalDecisionPackage } from '../aoeOperationalDecisions/aoeOperationalDecision.model';
 import { AnalyticsEvent } from '../analytics/analyticsEvent.model';
 import { getAnalyticsQualityTrend, getAnalyticsReadiness } from '../analytics/analyticsQuality.service';
+import { KnowledgeRecord } from '../knowledge/knowledgeRecord.model';
+import { KnowledgeRegistry } from '../knowledge/knowledgeRegistry.model';
 import { Transaction } from '../transactions/transaction.model';
 import { User } from '../users/user.model';
 
@@ -178,6 +180,11 @@ export async function getAdminControlCenterDashboard() {
     analyticsEventsLast7d,
     topAnalyticsDomains,
     topAnalyticsEventTypes,
+    totalKnowledgeRecords,
+    totalKnowledgeRegistryEntries,
+    recordsByKnowledgeDomain,
+    recordsByKnowledgeSourceType,
+    latestVersionedKnowledgeRecords,
     unresolvedAlerts,
   ] = await Promise.all([
     User.countDocuments(),
@@ -281,7 +288,21 @@ export async function getAdminControlCenterDashboard() {
       { $sort: { count: -1 } },
       { $limit: 5 },
     ]),
-    Audit.countDocuments({ action: { $in: alertActionNames } }),
+    KnowledgeRecord.countDocuments(),
+    KnowledgeRegistry.countDocuments(),
+    KnowledgeRecord.aggregate<{ _id: string; count: number }>([
+      { $group: { _id: '$knowledgeDomain', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]),
+    KnowledgeRecord.aggregate<{ _id: string; count: number }>([
+      { $group: { _id: '$sourceType', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]),
+    KnowledgeRecord.find({ version: { $gt: 1 } })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('_id knowledgeDomain knowledgeType version createdAt')
+      .lean(),    Audit.countDocuments({ action: { $in: alertActionNames } }),
   ]);
 
   const membershipsHealth: HealthStatus = suspended > 0 || inDunning > 0 ? 'warning' : 'healthy';
@@ -445,6 +466,19 @@ export async function getAdminControlCenterDashboard() {
       topDomains: topAnalyticsDomains.map((item) => ({ domain: item._id, count: item.count })),
       topEventTypes: topAnalyticsEventTypes.map((item) => ({ eventType: item._id, count: item.count })),
     },
+    knowledgeFoundation: {
+      totalRecords: totalKnowledgeRecords,
+      totalRegistryEntries: totalKnowledgeRegistryEntries,
+      recordsByDomain: recordsByKnowledgeDomain.map((item) => ({ domain: item._id, count: item.count })),
+      recordsBySourceType: recordsByKnowledgeSourceType.map((item) => ({ sourceType: item._id, count: item.count })),
+      latestVersionedRecords: latestVersionedKnowledgeRecords.map((record) => ({
+        id: String(record._id),
+        knowledgeDomain: record.knowledgeDomain,
+        knowledgeType: record.knowledgeType,
+        version: record.version,
+        createdAt: isoDate(record.createdAt),
+      })),
+    },
     analyticsQuality: {
       score: analyticsQualityReadiness.overallScore,
       classification: analyticsQualityReadiness.classification,
@@ -546,6 +580,10 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
+
+
+
 
 
 

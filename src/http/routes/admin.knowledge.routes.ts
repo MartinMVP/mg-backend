@@ -1,0 +1,115 @@
+import { Router } from 'express';
+import {
+  createKnowledgeRecord,
+  createKnowledgeRecordVersion,
+  getKnowledgeRecord,
+  listKnowledgeRecords,
+} from '../../domain/knowledge/knowledgeRecord.service';
+import { listKnowledgeRegistry } from '../../domain/knowledge/knowledgeRegistry.service';
+import { requireAuth } from '../middlewares/auth';
+import { requireRole } from '../middlewares/requireRole';
+
+const router = Router();
+
+function handleKnowledgeError(res: any, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = (error as any)?.status;
+
+  if (status) return res.status(status).json({ error: message });
+  throw error;
+}
+
+router.use(requireAuth, requireRole('admin', 'super'));
+
+router.get('/knowledge/records', async (req, res, next) => {
+  try {
+    const result = await listKnowledgeRecords({
+      page: req.query.page,
+      limit: req.query.limit,
+      knowledgeDomain: req.query.knowledgeDomain as string | undefined,
+      knowledgeType: req.query.knowledgeType as string | undefined,
+      version: req.query.version,
+      sourceType: req.query.sourceType as string | undefined,
+    });
+    res.json(result);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/records/:id', async (req, res, next) => {
+  try {
+    const record = await getKnowledgeRecord(String(req.params.id));
+    res.json(record);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/registry', async (req, res, next) => {
+  try {
+    const result = await listKnowledgeRegistry({
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    res.json(result);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.post('/knowledge/records', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const record = await createKnowledgeRecord({
+      knowledgeDomain: req.body?.knowledgeDomain,
+      knowledgeType: req.body?.knowledgeType,
+      sourceType: req.body?.sourceType,
+      sourceId: req.body?.sourceId ?? null,
+      facts: req.body?.facts,
+      context: req.body?.context,
+      provenance: req.body?.provenance,
+      producer: req.body?.producer,
+      actorId: user.sub,
+    });
+    res.status(201).json(record);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.post('/knowledge/records/:id/version', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const record = await createKnowledgeRecordVersion({
+      previousRecordId: String(req.params.id),
+      changes: req.body?.changes || {},
+      actorId: user.sub,
+    });
+    res.status(201).json(record);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+export default router;

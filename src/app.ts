@@ -20,6 +20,7 @@ import adminControlCenterRoutes from './http/routes/admin.controlCenter.routes';
 import adminPlatformConfigurationRoutes from './http/routes/admin.platformConfiguration.routes';
 import adminAOERoutes from './http/routes/admin.aoe.routes';
 import adminAnalyticsRoutes from './http/routes/admin.analytics.routes';
+import adminKnowledgeRoutes from './http/routes/admin.knowledge.routes';
 import stripeWebhookRoutes from './http/routes/stripe.webhook.routes';
 import messagingRoutes from './http/routes/messaging.routes';
 import auctionListingRoutes from './http/routes/auctionListing.routes';
@@ -66,6 +67,7 @@ app.use('/admin', adminPaymentRoutes);
 app.use('/admin', adminPlatformConfigurationRoutes);
 app.use('/admin', adminAOERoutes);
 app.use('/admin', adminAnalyticsRoutes);
+app.use('/admin', adminKnowledgeRoutes);
 app.use('/admin', adminControlCenterRoutes);
 
 
