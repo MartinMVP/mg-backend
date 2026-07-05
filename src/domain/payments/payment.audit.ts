@@ -1,6 +1,12 @@
 export const paymentAuditActions = {
   membershipCheckoutRequested: 'MEMBERSHIP_CHECKOUT_REQUESTED',
   membershipCheckoutCreated: 'MEMBERSHIP_CHECKOUT_CREATED',
+  paymentCheckoutCreated: 'PAYMENT_CHECKOUT_CREATED',
+  paymentConfirmed: 'PAYMENT_CONFIRMED',
+  paymentFailedConfirmed: 'PAYMENT_FAILED',
+  paymentCancelled: 'PAYMENT_CANCELLED',
+  webhookDuplicateIgnored: 'PAYMENT_WEBHOOK_DUPLICATE_IGNORED',
+  webhookInvalid: 'PAYMENT_WEBHOOK_INVALID',
   membershipCheckoutFailed: 'MEMBERSHIP_CHECKOUT_FAILED',
   stripeCustomerCreated: 'STRIPE_CUSTOMER_CREATED',
   webhookReceived: 'PAYMENT_WEBHOOK_RECEIVED',
@@ -24,3 +30,5 @@ export const paymentAuditActions = {
   suspendedNotice: 'MEMBERSHIP_SUSPENDED_NOTICE',
   cancelledNotice: 'MEMBERSHIP_CANCELLED_NOTICE',
 } as const;
+
+

@@ -4,6 +4,7 @@ import { requireAuth } from '../middlewares/auth';
 import { requireRole } from '../middlewares/requireRole';
 import { getUserMembership } from '../../domain/memberships/membership.service';
 import { getMembershipCapacity } from '../../domain/memberships/membershipCatalogPolicy';
+import { requestMembershipPurchaseCheckout } from '../../domain/payments/membershipPurchase.service';
 import { MembershipPlan } from '../../domain/memberships/membershipPlan.model';
 import { MembershipBenefit } from '../../domain/memberships/membershipBenefit.model';
 import { UserMembership } from '../../domain/memberships/userMembership.model';
@@ -57,8 +58,8 @@ function membershipChangeError(res: any, error: unknown) {
 }
 
 
-router.get('/membership/plans', requireAuth, requireMembershipAdmin, async (_req, res) => {
-  const plans = await MembershipPlan.find().sort({ sortOrder: 1, createdAt: -1 }).lean();
+router.get('/membership/plans', async (_req, res) => {
+  const plans = await MembershipPlan.find({ isActive: true }).sort({ sortOrder: 1, createdAt: -1 }).lean();
   res.json({ items: plans });
 });
 
@@ -115,6 +116,29 @@ router.post('/memberships', requireAuth, requireMembershipAdmin, async (req, res
     if (error?.code === 11000) return res.status(409).json({ error: 'active_membership_exists' });
     return membershipFoundationError(res, error);
   }
+});
+
+router.post('/membership/checkout', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  const result = await requestMembershipPurchaseCheckout({
+    userId: user.sub,
+    planId: req.body?.planId ? String(req.body.planId) : undefined,
+    planCode: req.body?.planCode ? String(req.body.planCode) : undefined,
+  });
+  res.status(result.status).json(result.body);
+});
+
+router.get('/memberships/current', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  const membership = await getUserMembership(user.sub);
+  res.json(membership);
+});
+
+router.get('/memberships/current/benefits', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  const membership = await getUserMembership(user.sub);
+  const benefits = await MembershipBenefit.find({ membershipId: membership.membership._id }).lean();
+  res.json({ membership: membership.membership, plan: membership.plan, benefits, legacyBenefits: membership.benefits, usage: membership.usage });
 });
 
 router.get('/memberships/:id', requireAuth, requireMembershipAdmin, async (req, res) => {
@@ -179,6 +203,7 @@ router.get('/memberships/:id/history', requireAuth, requireMembershipAdmin, asyn
     return membershipFoundationError(res, error);
   }
 });
+
 router.get('/account/membership', requireAuth, async (req, res) => {
   const user = (req as any).user;
   const membership = await getUserMembership(user.sub);
@@ -243,5 +268,7 @@ router.post('/account/membership/reactivate', requireAuth, async (req, res) => {
 });
 
 export default router;
+
+
 
 

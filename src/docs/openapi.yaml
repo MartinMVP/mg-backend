@@ -518,6 +518,79 @@ paths:
           schema: { type: string }
       responses: { '200': { description: OK } }
 
+  /membership/checkout:
+    post:
+      summary: Create Stripe Sandbox checkout for membership purchase
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                planId: { type: string }
+                planCode: { type: string }
+      responses:
+        '201': { description: Checkout created }
+        '409': { description: Active membership or Stripe configuration error }
+
+  /memberships/current:
+    get:
+      summary: Get current membership for authenticated user
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: OK } }
+
+  /memberships/current/benefits:
+    get:
+      summary: Get current membership benefits for authenticated user
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: OK } }
+
+  /payments/webhook/stripe:
+    post:
+      summary: Stripe webhook for membership purchase payments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: Processed or duplicate ignored }
+        '400': { description: Invalid signature or event }
+        '422': { description: Unprocessable event }
+
+  /payments/{id}:
+    get:
+      summary: Get own membership payment transaction
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+        '404': { description: Not found }
+
+  /admin/payments:
+    get:
+      summary: List membership payment transactions (admin/super)
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: OK } }
+
+  /admin/payments/{id}:
+    get:
+      summary: Get membership payment transaction (admin/super)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+        '404': { description: Not found }
 components:
   securitySchemes:
     bearerAuth:
@@ -525,3 +598,4 @@ components:
       scheme: bearer
       bearerFormat: JWT
 
+

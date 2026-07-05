@@ -6,6 +6,7 @@ import { MembershipBenefit, MembershipBenefitFeature, membershipBenefitFeatures 
 import { MembershipHistory } from './membershipHistory.model';
 import { UserMembership } from './userMembership.model';
 import { membershipAuditActions } from './membership.audit';
+import { PaymentConfirmed } from '../payments/paymentConfirmed.event';
 import { ensureMembershipUsageForPeriod } from './membership.service';
 
 const dayMs = 24 * 60 * 60_000;
@@ -282,4 +283,66 @@ export async function operateMembershipBenefit(input: {
 
 export async function listMembershipHistory(id: string) {
   return MembershipHistory.find({ membershipId: requireObjectId(id, 'membership_id') }).sort({ createdAt: -1 }).lean();
+}
+
+export async function activateMembershipFromPaymentConfirmed(event: PaymentConfirmed) {
+  const membership = await UserMembership.findById(event.membershipId);
+  if (!membership) throw new Error('membership_not_found');
+  if (String(membership.userId) !== String(event.userId)) throw new Error('membership_payment_user_mismatch');
+  if (String(membership.planId) !== String(event.planId)) throw new Error('membership_payment_plan_mismatch');
+
+  if (membership.status === 'active') {
+    return { membership, alreadyActive: true };
+  }
+
+  await UserMembership.updateMany(
+    {
+      _id: { $ne: membership._id },
+      userId: membership.userId,
+      status: 'active',
+    },
+    {
+      $set: {
+        status: 'expired',
+        expiresAt: event.confirmedAt,
+      },
+    }
+  );
+
+  const fromStatus = membership.status;
+  const plan = await MembershipPlan.findById(membership.planId);
+  const durationDays = Number(plan?.durationDays ?? 30);
+  const expiresAt = new Date(event.confirmedAt.getTime() + durationDays * dayMs);
+
+  membership.status = 'active';
+  membership.startsAt = event.confirmedAt;
+  membership.currentPeriodStart = event.confirmedAt;
+  membership.currentPeriodEnd = expiresAt;
+  membership.expiresAt = expiresAt;
+  membership.activatedAt = event.confirmedAt;
+  membership.paymentProvider = 'stripe';
+  membership.source = 'stripe';
+  await membership.save();
+
+  await ensureMembershipUsageForPeriod(membership);
+  await grantMembershipBenefits(membership._id, String(event.userId));
+  await recordHistory({
+    membershipId: membership._id,
+    userId: membership.userId,
+    action: 'activated_from_payment',
+    fromStatus,
+    toStatus: membership.status,
+    actor: String(event.userId),
+    metadata: { paymentTransactionId: String(event.paymentTransactionId), amount: event.amount, currency: event.currency },
+  });
+  await audit(String(event.userId), 'MEMBERSHIP_ACTIVATED_FROM_PAYMENT');
+  await audit(String(event.userId), 'MEMBERSHIP_BENEFITS_GRANTED_FROM_PAYMENT');
+  await notify(
+    membership.userId,
+    'membership_activated_from_payment',
+    'Membresía activada',
+    'Tu membresía fue activada después de confirmarse el pago.'
+  );
+
+  return { membership, alreadyActive: false };
 }

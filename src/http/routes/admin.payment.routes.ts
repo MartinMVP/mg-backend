@@ -8,6 +8,7 @@ import { PaymentCheckoutSession } from '../../domain/payments/paymentCheckoutSes
 import { PaymentCustomer } from '../../domain/payments/paymentCustomer.model';
 import { PaymentRecord } from '../../domain/payments/paymentRecord.model';
 import { PaymentWebhookLog } from '../../domain/payments/paymentWebhookLog.model';
+import { MembershipPaymentTransaction } from '../../domain/payments/membershipPaymentTransaction.model';
 import { DunningState } from '../../domain/payments/dunningState.model';
 import { processDunningDue } from '../../domain/payments/dunning.service';
 
@@ -32,6 +33,27 @@ function parseDateFilter(query: any) {
 }
 
 router.use(requireAuth, requireAdmin);
+
+
+router.get('/payments', async (req, res) => {
+  const { page, limit } = parsePagination(req.query);
+  const query: Record<string, any> = {};
+  if (req.query.status) query.status = String(req.query.status);
+  if (req.query.userId && Types.ObjectId.isValid(String(req.query.userId))) query.userId = String(req.query.userId);
+
+  const [items, total] = await Promise.all([
+    MembershipPaymentTransaction.find(query)
+      .sort({ processedAt: -1, createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate({ path: 'userId', select: 'name email role' })
+      .populate({ path: 'planId', select: 'name code monthlyPrice yearlyPrice durationDays' })
+      .lean(),
+    MembershipPaymentTransaction.countDocuments(query),
+  ]);
+
+  res.json({ items, page, limit, total });
+});
 
 router.get('/payments/customers', async (req, res) => {
   const { page, limit } = parsePagination(req.query);
@@ -145,4 +167,17 @@ router.post('/payments/dunning/process-due', async (_req, res) => {
   res.json(result);
 });
 
+router.get('/payments/:id', async (req, res) => {
+  const id = String(req.params.id);
+  if (!Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'invalid_payment_id' });
+  const payment = await MembershipPaymentTransaction.findById(id)
+    .populate({ path: 'userId', select: 'name email role' })
+    .populate({ path: 'planId', select: 'name code monthlyPrice yearlyPrice durationDays' })
+    .lean();
+  if (!payment) return res.status(404).json({ error: 'payment_not_found' });
+  res.json(payment);
+});
+
 export default router;
+
+

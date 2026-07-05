@@ -21,6 +21,8 @@ import { Message } from '../messaging/message.model';
 import { Notification } from '../notifications/notification.model';
 import { DunningState } from '../payments/dunningState.model';
 import { PaymentCheckoutSession } from '../payments/paymentCheckoutSession.model';
+import { MembershipPaymentSession } from '../payments/membershipPaymentSession.model';
+import { MembershipPaymentTransaction } from '../payments/membershipPaymentTransaction.model';
 import { PaymentRecord } from '../payments/paymentRecord.model';
 import { PaymentWebhookLog } from '../payments/paymentWebhookLog.model';
 import { PlatformConfiguration } from '../platformConfiguration/platformConfiguration.model';
@@ -106,6 +108,12 @@ export async function getAdminControlCenterDashboard() {
     membershipFoundationSuspendedMemberships,
     membershipFoundationBenefitsGranted,
     membershipFoundationBenefitsConsumed,
+    membershipPurchaseCheckoutSessionsCreated,
+    membershipPurchasePaymentsConfirmed,
+    membershipPurchasePaymentsFailed,
+    membershipPurchaseDuplicateWebhooksIgnored,
+    membershipPurchaseMembershipsActivatedFromPayment,
+    membershipPurchaseActiveErrors,
     activeMemberships,
     freeMemberships,
     paidMemberships,
@@ -224,6 +232,12 @@ export async function getAdminControlCenterDashboard() {
     MembershipBenefit.aggregate<{ _id: null; consumed: number }>([
       { $group: { _id: null, consumed: { $sum: '$consumed' } } },
     ]),
+    MembershipPaymentSession.countDocuments(),
+    MembershipPaymentTransaction.countDocuments({ status: 'payment_confirmed' }),
+    MembershipPaymentTransaction.countDocuments({ status: 'payment_failed' }),
+    Audit.countDocuments({ action: 'PAYMENT_WEBHOOK_DUPLICATE_IGNORED' }),
+    Audit.countDocuments({ action: 'MEMBERSHIP_ACTIVATED_FROM_PAYMENT' }),
+    MembershipPaymentSession.countDocuments({ status: { $in: ['payment_failed', 'payment_cancelled', 'checkout_expired'] } }),
     UserMembership.countDocuments({ status: 'active' }),
     UserMembership.countDocuments({ planId: { $in: freePlanIds } }),
     UserMembership.countDocuments({ planId: { $in: paidPlanIds } }),
@@ -408,6 +422,14 @@ export async function getAdminControlCenterDashboard() {
       suspendedMemberships: membershipFoundationSuspendedMemberships,
       benefitsGranted: membershipFoundationBenefitsGranted,
       benefitsConsumed: membershipFoundationBenefitsConsumed[0]?.consumed || 0,
+    },
+    membershipPurchases: {
+      checkoutSessionsCreated: membershipPurchaseCheckoutSessionsCreated,
+      paymentsConfirmed: membershipPurchasePaymentsConfirmed,
+      paymentsFailed: membershipPurchasePaymentsFailed,
+      duplicateWebhooksIgnored: membershipPurchaseDuplicateWebhooksIgnored,
+      membershipsActivatedFromPayment: membershipPurchaseMembershipsActivatedFromPayment,
+      activePurchaseErrors: membershipPurchaseActiveErrors,
     },
     memberships: {
       activeMemberships,
@@ -677,6 +699,7 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
 
 
 
