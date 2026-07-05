@@ -1,6 +1,22 @@
 import { Router } from 'express';
 import { Audit } from '../../domain/audit/audit.model';
 import { getAnalyticsSummary } from '../../domain/analytics/analyticsAggregation.service';
+import { getAnalyticsCoverage } from '../../domain/analytics/analyticsCoverage.service';
+import {
+  getAnalyticsCompleteness,
+  getAnalyticsFreshness,
+  getAnalyticsIntegrity,
+  getAnalyticsLatency,
+  getCorrelationQuality,
+  getDimensionsQuality,
+  getTagsQuality,
+} from '../../domain/analytics/analyticsIntegrity.service';
+import {
+  generateAnalyticsQualitySnapshot,
+  getAnalyticsQuality,
+  getAnalyticsQualityTrend,
+  getAnalyticsReadiness,
+} from '../../domain/analytics/analyticsQuality.service';
 import {
   getBusinessAnalytics,
   getEventsByCorrelationId,
@@ -116,6 +132,118 @@ router.get('/analytics/business', async (req, res, next) => {
       limit: req.query.limit,
     });
     res.json(result);
+  } catch (error) {
+    try {
+      return handleAnalyticsError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/analytics/quality', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    res.json(await getAnalyticsQuality(user.sub));
+  } catch (error) {
+    try {
+      return handleAnalyticsError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/analytics/readiness', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    res.json(await getAnalyticsReadiness(user.sub));
+  } catch (error) {
+    try {
+      return handleAnalyticsError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/analytics/coverage', async (_req, res, next) => {
+  try {
+    res.json(await getAnalyticsCoverage());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get('/analytics/correlation', async (_req, res, next) => {
+  try {
+    res.json(await getCorrelationQuality());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get('/analytics/dimensions', async (_req, res, next) => {
+  try {
+    res.json(await getDimensionsQuality());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get('/analytics/tags', async (_req, res, next) => {
+  try {
+    res.json(await getTagsQuality());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get('/analytics/integrity', async (_req, res, next) => {
+  try {
+    res.json(await getAnalyticsIntegrity());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get('/analytics/completeness', async (_req, res, next) => {
+  try {
+    res.json(await getAnalyticsCompleteness());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get('/analytics/freshness', async (_req, res, next) => {
+  try {
+    res.json(await getAnalyticsFreshness());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get('/analytics/latency', async (_req, res, next) => {
+  try {
+    res.json(await getAnalyticsLatency());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get('/analytics/trend', async (_req, res, next) => {
+  try {
+    res.json(await getAnalyticsQualityTrend());
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post('/analytics/quality/snapshot', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const snapshot = await generateAnalyticsQualitySnapshot(user.sub);
+    res.status(201).json(snapshot);
   } catch (error) {
     try {
       return handleAnalyticsError(res, error);

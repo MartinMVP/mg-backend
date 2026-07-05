@@ -186,6 +186,42 @@ export const sandboxDefaultConfigurations: Array<{
     value: 'indefinite',
     description: 'Sandbox Analytics aggregations retention policy',
   },
+  {
+    key: 'analytics.quality.coverageThreshold',
+    valueType: 'number',
+    value: 95,
+    description: 'Sandbox Analytics quality coverage gate threshold',
+  },
+  {
+    key: 'analytics.quality.integrityThreshold',
+    valueType: 'number',
+    value: 98,
+    description: 'Sandbox Analytics quality integrity gate threshold',
+  },
+  {
+    key: 'analytics.quality.completenessThreshold',
+    valueType: 'number',
+    value: 95,
+    description: 'Sandbox Analytics quality completeness gate threshold',
+  },
+  {
+    key: 'analytics.quality.correlationThreshold',
+    valueType: 'number',
+    value: 90,
+    description: 'Sandbox Analytics quality correlation gate threshold',
+  },
+  {
+    key: 'analytics.quality.freshnessFreshSeconds',
+    valueType: 'number',
+    value: 300,
+    description: 'Sandbox Analytics freshness fresh threshold in seconds',
+  },
+  {
+    key: 'analytics.quality.freshnessStaleSeconds',
+    valueType: 'number',
+    value: 1800,
+    description: 'Sandbox Analytics freshness stale threshold in seconds',
+  },
 ];
 
 function reject(status: number, message: string): never {
@@ -370,4 +406,5 @@ export async function seedSandboxDefaultConfigurations(changedBy: string | Types
   }
   return created;
 }
+
 

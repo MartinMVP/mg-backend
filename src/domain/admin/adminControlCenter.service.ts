@@ -26,6 +26,7 @@ import { PlatformConfiguration } from '../platformConfiguration/platformConfigur
 import { AOECase } from '../aoe/aoeCase.model';
 import { AOEDecisionProposal } from '../aoe/aoeDecisionProposal.model';
 import { AnalyticsEvent } from '../analytics/analyticsEvent.model';
+import { getAnalyticsQualityTrend, getAnalyticsReadiness } from '../analytics/analyticsQuality.service';
 import { Transaction } from '../transactions/transaction.model';
 import { User } from '../users/user.model';
 
@@ -271,6 +272,8 @@ export async function getAdminControlCenterDashboard() {
       : 'healthy';
 
   const alerts = await getAdminControlCenterAlerts(10);
+  const analyticsQualityReadiness = await getAnalyticsReadiness();
+  const analyticsQualityTrend = await getAnalyticsQualityTrend(analyticsQualityReadiness.overallScore);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -407,6 +410,25 @@ export async function getAdminControlCenterDashboard() {
       topDomains: topAnalyticsDomains.map((item) => ({ domain: item._id, count: item.count })),
       topEventTypes: topAnalyticsEventTypes.map((item) => ({ eventType: item._id, count: item.count })),
     },
+    analyticsQuality: {
+      score: analyticsQualityReadiness.overallScore,
+      classification: analyticsQualityReadiness.classification,
+      health: analyticsQualityReadiness.health,
+      coverage: analyticsQualityReadiness.coverage.overall,
+      correlation: analyticsQualityReadiness.correlation.correlationCoverage,
+      integrity: analyticsQualityReadiness.integrity.score,
+      completeness: analyticsQualityReadiness.completeness.completenessScore,
+      freshness: analyticsQualityReadiness.freshness.status,
+      latency: {
+        avgLatencyMs: analyticsQualityReadiness.latency.avgLatencyMs,
+        p95LatencyMs: analyticsQualityReadiness.latency.p95LatencyMs,
+        maxLatencyMs: analyticsQualityReadiness.latency.maxLatencyMs,
+        sampleSize: analyticsQualityReadiness.latency.sampleSize,
+      },
+      trend: analyticsQualityTrend.trend,
+      blockingIssues: analyticsQualityReadiness.blockingIssues,
+      warnings: analyticsQualityReadiness.warnings,
+    },
     alerts,
   };
 }
@@ -489,5 +511,6 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
 
 
