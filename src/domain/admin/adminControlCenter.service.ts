@@ -25,6 +25,7 @@ import { PaymentWebhookLog } from '../payments/paymentWebhookLog.model';
 import { PlatformConfiguration } from '../platformConfiguration/platformConfiguration.model';
 import { AOECase } from '../aoe/aoeCase.model';
 import { AOEDecisionProposal } from '../aoe/aoeDecisionProposal.model';
+import { AnalyticsEvent } from '../analytics/analyticsEvent.model';
 import { Transaction } from '../transactions/transaction.model';
 import { User } from '../users/user.model';
 
@@ -158,6 +159,13 @@ export async function getAdminControlCenterDashboard() {
     viewedAOEProposals,
     escalatedAOEProposals,
     closedAOEProposals,
+    totalAnalyticsEvents,
+    operationalAnalyticsEvents,
+    businessAnalyticsEvents,
+    analyticsEventsLast24h,
+    analyticsEventsLast7d,
+    topAnalyticsDomains,
+    topAnalyticsEventTypes,
     unresolvedAlerts,
   ] = await Promise.all([
     User.countDocuments(),
@@ -234,6 +242,21 @@ export async function getAdminControlCenterDashboard() {
     AOEDecisionProposal.countDocuments({ status: 'viewed' }),
     AOEDecisionProposal.countDocuments({ status: 'escalated' }),
     AOEDecisionProposal.countDocuments({ status: 'closed' }),
+    AnalyticsEvent.countDocuments(),
+    AnalyticsEvent.countDocuments({ analyticsCategory: 'operational' }),
+    AnalyticsEvent.countDocuments({ analyticsCategory: 'business' }),
+    AnalyticsEvent.countDocuments({ occurredAt: { $gte: new Date(Date.now() - 24 * 60 * 60_000) } }),
+    AnalyticsEvent.countDocuments({ occurredAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60_000) } }),
+    AnalyticsEvent.aggregate<{ _id: string; count: number }>([
+      { $group: { _id: '$domain', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 5 },
+    ]),
+    AnalyticsEvent.aggregate<{ _id: string; count: number }>([
+      { $group: { _id: '$eventType', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 5 },
+    ]),
     Audit.countDocuments({ action: { $in: alertActionNames } }),
   ]);
 
@@ -375,6 +398,15 @@ export async function getAdminControlCenterDashboard() {
       escalatedProposals: escalatedAOEProposals,
       closedProposals: closedAOEProposals,
     },
+    analytics: {
+      totalEvents: totalAnalyticsEvents,
+      operationalEvents: operationalAnalyticsEvents,
+      businessEvents: businessAnalyticsEvents,
+      eventsLast24h: analyticsEventsLast24h,
+      eventsLast7d: analyticsEventsLast7d,
+      topDomains: topAnalyticsDomains.map((item) => ({ domain: item._id, count: item.count })),
+      topEventTypes: topAnalyticsEventTypes.map((item) => ({ eventType: item._id, count: item.count })),
+    },
     alerts,
   };
 }
@@ -457,3 +489,5 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
+

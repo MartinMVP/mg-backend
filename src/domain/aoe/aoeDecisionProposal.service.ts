@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { recordAnalyticsEvent } from '../analytics/analytics.service';
 import { Audit } from '../audit/audit.model';
 import { getConfigValue } from '../platformConfiguration/platformConfiguration.service';
 import { AOECase } from './aoeCase.model';
@@ -114,6 +115,21 @@ export async function buildAOEDecisionProposal(aoeCaseId: string | Types.ObjectI
     aoeCaseId: String(caseObjectId),
     aoeDecisionProposalId: String(proposal._id),
     classification,
+  });
+  await recordAnalyticsEvent({
+    domain: 'aoe',
+    eventType: aoeDecisionProposalAuditActions.created,
+    entityType: 'platform',
+    entityId: proposal._id,
+    metadata: {
+      aoeCaseId: String(caseObjectId),
+      aoeDecisionProposalId: String(proposal._id),
+      classification,
+      proposalType,
+    },
+    tags: ['aoe', 'system'],
+    source: 'aoe',
+    analyticsCategory: 'operational',
   });
   return proposal;
 }

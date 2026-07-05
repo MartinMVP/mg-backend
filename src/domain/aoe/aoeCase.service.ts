@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { recordAnalyticsEvent } from '../analytics/analytics.service';
 import { Audit } from '../audit/audit.model';
 import { getConfigValue } from '../platformConfiguration/platformConfiguration.service';
 import {
@@ -132,6 +133,20 @@ export async function createPlatformAOECase(input: {
     type: aoeCase.type,
     entityType: aoeCase.entityType,
     entityId: String(aoeCase.entityId),
+  });
+  await recordAnalyticsEvent({
+    domain: 'aoe',
+    eventType: aoeCaseAuditActions.created,
+    entityType: aoeCase.entityType,
+    entityId: aoeCase.entityId,
+    metadata: {
+      aoeCaseId: String(aoeCase._id),
+      type: aoeCase.type,
+      priority: aoeCase.priority,
+    },
+    tags: ['aoe', 'system'],
+    source: 'aoe',
+    analyticsCategory: 'operational',
   });
   return aoeCase;
 }

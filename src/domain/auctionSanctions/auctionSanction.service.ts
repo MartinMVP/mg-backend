@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { recordAnalyticsEvent } from '../analytics/analytics.service';
 import { Audit } from '../audit/audit.model';
 import { AuctionDefaultReport } from '../auctionDefaults/auctionDefault.model';
 import { countConfirmedDefaultsForUser } from '../auctionDefaults/auctionDefault.repository';
@@ -160,6 +161,22 @@ export async function applyAuctionSanction(input: {
       sourceDefaultId: String(sourceDefaultId),
       userId: String(sourceDefault.reportedUserId),
       type: sourceDefault.role,
+    });
+    await recordAnalyticsEvent({
+      domain: 'auction_listings',
+      eventType: auctionSanctionAuditActions.applied,
+      entityType: 'sanction',
+      entityId: sanction._id,
+      actorId,
+      metadata: {
+        sourceDefaultId: String(sourceDefaultId),
+        userId: String(sourceDefault.reportedUserId),
+        type: sourceDefault.role,
+        offenseNumber: rebuilt.offenseNumber,
+      },
+      tags: ['auction', 'sanction'],
+      source: 'domain_event',
+      analyticsCategory: 'business',
     });
     await observeAuctionComplianceEvent({
       event: auctionSanctionAuditActions.applied,

@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { recordAnalyticsEvent } from '../analytics/analytics.service';
 import { Audit } from '../audit/audit.model';
 import { AuctionListing } from '../auctionListings/auctionListing.model';
 import { Conversation } from '../messaging/conversation.model';
@@ -223,6 +224,21 @@ export async function confirmAuctionDefault(input: {
     auctionDefaultReportId: String(report._id),
     auctionListingId: String(report.auctionListingId),
     recommendation,
+  });
+  await recordAnalyticsEvent({
+    domain: 'auction_listings',
+    eventType: auctionDefaultAuditActions.confirmed,
+    entityType: 'auction',
+    entityId: report.auctionListingId,
+    actorId,
+    metadata: {
+      auctionDefaultReportId: String(report._id),
+      role: report.role,
+      resolutionType: report.resolutionType,
+    },
+    tags: ['auction', 'sanction'],
+    source: 'domain_event',
+    analyticsCategory: 'business',
   });
   await observeAuctionComplianceEvent({
     event: auctionDefaultAuditActions.confirmed,

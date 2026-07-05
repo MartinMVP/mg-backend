@@ -173,7 +173,20 @@ export const sandboxDefaultConfigurations: Array<{
     value: false,
     description: 'Sandbox AOE execution switch, fixed off for v1',
     isProtected: true,
-  },];
+  },
+  {
+    key: 'analytics.rawRetentionYears',
+    valueType: 'number',
+    value: 5,
+    description: 'Sandbox raw Analytics Events retention policy in years',
+  },
+  {
+    key: 'analytics.aggregationRetentionPolicy',
+    valueType: 'string',
+    value: 'indefinite',
+    description: 'Sandbox Analytics aggregations retention policy',
+  },
+];
 
 function reject(status: number, message: string): never {
   const error = new Error(message);
@@ -357,3 +370,4 @@ export async function seedSandboxDefaultConfigurations(changedBy: string | Types
   }
   return created;
 }
+
