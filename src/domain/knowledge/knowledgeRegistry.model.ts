@@ -68,6 +68,9 @@ const knowledgeRegistrySchema = new Schema<IKnowledgeRegistry>(
 
 knowledgeRegistrySchema.index({ knowledgeDomain: 1, knowledgeType: 1, version: -1 });
 knowledgeRegistrySchema.index({ createdAt: -1 });
-knowledgeRegistrySchema.index({ knowledgeRecordId: 1 }, { unique: true, sparse: true });
+knowledgeRegistrySchema.index(
+  { knowledgeRecordId: 1 },
+  { unique: true, partialFilterExpression: { knowledgeRecordId: { $type: 'objectId' } } }
+);
 
 export const KnowledgeRegistry = model<IKnowledgeRegistry>('KnowledgeRegistry', knowledgeRegistrySchema);

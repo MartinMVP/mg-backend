@@ -68,6 +68,30 @@ export type KnowledgeLifecycleStage = typeof knowledgeLifecycleStages[number];
 export const knowledgeRegistryStatuses = ['active', 'deprecated', 'archived'] as const;
 export type KnowledgeRegistryStatus = typeof knowledgeRegistryStatuses[number];
 
+export const knowledgeConsumerTypes = ['aoe', 'analytics', 'quality', 'admin'] as const;
+export type KnowledgeConsumerType = typeof knowledgeConsumerTypes[number];
+
+export interface KnowledgeConsumerContract {
+  consumerType: KnowledgeConsumerType;
+  ownerDomain: string;
+  steward: string;
+  allowedDomains: string[];
+  allowedAssetTypes: string[];
+  minimumKnowledgeQuality: KnowledgeQualityLevel;
+  maximumKnowledgeAge?: number | null;
+  preferredLifecycle: KnowledgeLifecycleStage[];
+  purposeCategory: string;
+}
+
+export interface KnowledgeResolutionPolicyInput {
+  allowedDomains: string[];
+  minimumQuality: KnowledgeQualityLevel;
+  allowedLifecycle: KnowledgeLifecycleStage[];
+  maximumPackageSize: number;
+  includeDeprecated: boolean;
+  includeCandidate: boolean;
+}
+
 export interface KnowledgeQuality {
   level: KnowledgeQualityLevel;
   score: number;
@@ -128,6 +152,7 @@ export interface KnowledgeRecordVersionChanges {
 }
 
 export interface CreateKnowledgeCollectionInput {
+  tenantId?: string;
   collectionType: KnowledgeCollectionType;
   title: string;
   description: string;
@@ -138,6 +163,7 @@ export interface CreateKnowledgeCollectionInput {
 }
 
 export interface CreateKnowledgeAssetInput {
+  tenantId?: string;
   assetType: KnowledgeAssetType;
   title: string;
   description: string;

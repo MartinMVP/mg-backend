@@ -15,6 +15,12 @@ import {
   listKnowledgeAssets,
 } from '../../domain/knowledge/knowledgeAsset.service';
 import { getKnowledgeManagementMetrics } from '../../domain/knowledge/knowledgeMetrics.service';
+import {
+  getKnowledgeSnapshot,
+  getKnowledgeUtilizationPackage,
+  resolveKnowledge,
+} from '../../domain/knowledge/knowledgeResolution.service';
+import { getKnowledgeUtilizationMetrics } from '../../domain/knowledge/knowledgeUtilizationMetrics.service';
 import { listKnowledgeRegistry } from '../../domain/knowledge/knowledgeRegistry.service';
 import { requireAuth } from '../middlewares/auth';
 import { requireRole } from '../middlewares/requireRole';
@@ -167,6 +173,65 @@ router.get('/knowledge/metrics', async (_req, res, next) => {
     res.json(metrics);
   } catch (error) {
     return next(error);
+  }
+});
+
+router.get('/knowledge/utilization', async (_req, res, next) => {
+  try {
+    const metrics = await getKnowledgeUtilizationMetrics();
+    res.json(metrics);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post('/knowledge/resolve', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const result = await resolveKnowledge({
+      consumer: req.body?.consumer,
+      policy: req.body?.policy,
+      domain: req.body?.domain,
+      objective: req.body?.objective,
+      constraints: req.body?.constraints,
+      requestedKnowledge: req.body?.requestedKnowledge,
+      tenantId: req.body?.tenantId || 'default',
+      actorId: user.sub,
+    });
+    res.status(201).json(result);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/packages/:id', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const pkg = await getKnowledgeUtilizationPackage(String(req.params.id), user.sub);
+    res.json(pkg);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/knowledge/snapshots/:id', async (req, res, next) => {
+  try {
+    const snapshot = await getKnowledgeSnapshot(String(req.params.id));
+    res.json(snapshot);
+  } catch (error) {
+    try {
+      return handleKnowledgeError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
   }
 });
 

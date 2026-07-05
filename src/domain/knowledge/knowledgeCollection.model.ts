@@ -5,6 +5,7 @@ import {
 } from './knowledge.types';
 
 export interface IKnowledgeCollection {
+  tenantId: string;
   collectionType: KnowledgeCollectionType;
   title: string;
   description: string;
@@ -18,6 +19,7 @@ export interface IKnowledgeCollection {
 
 const knowledgeCollectionSchema = new Schema<IKnowledgeCollection>(
   {
+    tenantId: { type: String, required: true, default: 'default', index: true },
     collectionType: { type: String, enum: knowledgeCollectionTypes, required: true, index: true },
     title: { type: String, required: true, trim: true, maxlength: 200 },
     description: { type: String, required: true, trim: true, maxlength: 2000 },

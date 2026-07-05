@@ -44,6 +44,7 @@ export async function createKnowledgeCollection(input: CreateKnowledgeCollection
   if (existingRecords !== knowledgeRecords.length) reject(404, 'knowledge_record_not_found');
 
   const collection = await createKnowledgeCollectionDocument({
+    tenantId: input.tenantId || 'default',
     collectionType: input.collectionType,
     title: input.title,
     description: input.description,

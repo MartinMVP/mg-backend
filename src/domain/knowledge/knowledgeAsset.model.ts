@@ -9,6 +9,7 @@ import {
 } from './knowledge.types';
 
 export interface IKnowledgeAsset {
+  tenantId: string;
   assetType: KnowledgeAssetType;
   title: string;
   description: string;
@@ -45,6 +46,7 @@ const lifecycleSchema = new Schema<KnowledgeLifecycle>(
 
 const knowledgeAssetSchema = new Schema<IKnowledgeAsset>(
   {
+    tenantId: { type: String, required: true, default: 'default', index: true },
     assetType: { type: String, enum: knowledgeAssetTypes, required: true, index: true },
     title: { type: String, required: true, trim: true, maxlength: 200 },
     description: { type: String, required: true, trim: true, maxlength: 2000 },

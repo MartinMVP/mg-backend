@@ -70,6 +70,7 @@ export async function createKnowledgeAsset(input: CreateKnowledgeAssetInput & { 
   const quality = defaultQuality(input.quality);
   const lifecycle = defaultLifecycle(input.lifecycle);
   const asset = await createKnowledgeAssetDocument({
+    tenantId: input.tenantId || 'default',
     assetType: input.assetType,
     title: input.title,
     description: input.description,

@@ -31,6 +31,7 @@ import { getAnalyticsQualityTrend, getAnalyticsReadiness } from '../analytics/an
 import { KnowledgeAsset } from '../knowledge/knowledgeAsset.model';
 import { KnowledgeCollection } from '../knowledge/knowledgeCollection.model';
 import { getKnowledgeManagementMetrics } from '../knowledge/knowledgeMetrics.service';
+import { getKnowledgeUtilizationMetrics } from '../knowledge/knowledgeUtilizationMetrics.service';
 import { KnowledgeRecord } from '../knowledge/knowledgeRecord.model';
 import { KnowledgeRegistry } from '../knowledge/knowledgeRegistry.model';
 import { Transaction } from '../transactions/transaction.model';
@@ -191,6 +192,7 @@ export async function getAdminControlCenterDashboard() {
     totalKnowledgeCollections,
     totalKnowledgeAssets,
     knowledgeManagementMetrics,
+    knowledgeUtilizationMetrics,
     unresolvedAlerts,
   ] = await Promise.all([
     User.countDocuments(),
@@ -312,6 +314,7 @@ export async function getAdminControlCenterDashboard() {
     KnowledgeCollection.countDocuments(),
     KnowledgeAsset.countDocuments(),
     getKnowledgeManagementMetrics(),
+    getKnowledgeUtilizationMetrics(),
     Audit.countDocuments({ action: { $in: alertActionNames } }),
   ]);
 
@@ -501,6 +504,16 @@ export async function getAdminControlCenterDashboard() {
       coverage: knowledgeManagementMetrics.coverage,
       freshness: knowledgeManagementMetrics.freshness,
     },
+    knowledgeUtilization: {
+      consumers: knowledgeUtilizationMetrics.totalConsumers,
+      packages: knowledgeUtilizationMetrics.totalPackages,
+      snapshots: knowledgeUtilizationMetrics.totalSnapshots,
+      byConsumer: knowledgeUtilizationMetrics.byConsumer,
+      byDomain: knowledgeUtilizationMetrics.byDomain,
+      byAssetType: knowledgeUtilizationMetrics.byAssetType,
+      reuseRate: knowledgeUtilizationMetrics.knowledgeReuseRate,
+      coverage: knowledgeUtilizationMetrics.knowledgeCoverage,
+    },
     analyticsQuality: {
       score: analyticsQualityReadiness.overallScore,
       classification: analyticsQualityReadiness.classification,
@@ -602,6 +615,8 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
+
 
 
 
