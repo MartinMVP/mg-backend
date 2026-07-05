@@ -53,6 +53,7 @@ app.use('/auth', authRoutes);
 app.use('/files', express.static('uploads', { maxAge: '1d', immutable: true }));
 app.use('/catalog', catalogRoutes);
 app.use('/api', mediaRoutes); // si lo prefieres en /api
+app.use('/', mediaRoutes);
 app.use('/', auctionsRoutes);
 app.use('/', notificationsRoutes);
 app.use('/', accountRoutes);
@@ -120,4 +121,5 @@ if (env.swaggerEnabled) {
 app.use(errorHandler);
 
 export default app;
+
 

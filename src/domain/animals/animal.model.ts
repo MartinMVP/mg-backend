@@ -1,21 +1,24 @@
 import { Schema, model, Types } from 'mongoose';
 
 export type Sex = 'M' | 'F';
+export type AnimalStatus = 'draft' | 'active' | 'archived';
 
 export interface IAnimal {
   owner: Types.ObjectId;
-  tag: string;            // arete/identificador
+  ownerId?: Types.ObjectId;
+  tag: string;
   name?: string;
-  breed: Types.ObjectId;  // ref -> Breed
+  breed: Types.ObjectId;
   sex: Sex;
   birthDate?: Date;
-  registry?: Types.ObjectId;  // ref -> Registry
-  registryId?: string;        // número de registro
+  registry?: Types.ObjectId;
+  registryId?: string;
   pedigreeUrl?: string;
   weightKg?: number;
   location: { state: string; municipality?: string };
+  status?: AnimalStatus;
   isActive: boolean;
-  deletedAt?: Date | null;    // soft delete
+  deletedAt?: Date | null;
 }
 
 const AnimalSchema = new Schema<IAnimal>(
@@ -34,14 +37,17 @@ const AnimalSchema = new Schema<IAnimal>(
       state: { type: String, required: true, trim: true },
       municipality: { type: String, trim: true },
     },
+    status: { type: String, enum: ['draft', 'active', 'archived'], default: 'active', index: true },
     isActive: { type: Boolean, default: true },
     deletedAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
+AnimalSchema.virtual('ownerId').get(function () {
+  return this.owner;
+});
 AnimalSchema.index({ tag: 1, owner: 1 }, { unique: true });
-// búsqueda rápida por texto básico
 AnimalSchema.index({ tag: 'text', name: 'text' });
 
 export const Animal = model<IAnimal>('Animal', AnimalSchema);

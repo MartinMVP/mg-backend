@@ -192,7 +192,7 @@ paths:
           schema: { type: integer, default: 20 }
       responses: { '200': { description: OK } }
     post:
-      summary: Create listing
+      summary: Create listing draft
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -203,8 +203,14 @@ paths:
               required: [animal, price]
               properties:
                 animal: { type: string }
+                animalId: { type: string }
+                title: { type: string }
+                description: { type: string }
                 price: { type: number }
                 isNegotiable: { type: boolean }
+                media:
+                  type: array
+                  items: { type: string }
       responses:
         '201': { description: Created }
 
@@ -244,9 +250,33 @@ paths:
       responses:
         '200': { description: OK }
 
+  /catalog/listings/{id}/publish:
+    patch:
+      summary: Publish listing draft and consume membership listing slot
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Published or already published }
+        '409': { description: Membership limit reached or listing cannot publish }
+
+  /catalog/listings/{id}/archive:
+    patch:
+      summary: Archive listing and release membership listing slot when published
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Archived or already archived }
   /api/media:
     post:
-      summary: Upload image
+      summary: Upload image or document
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -690,5 +720,6 @@ components:
       scheme: bearer
       bearerFormat: JWT
 
+
 
 

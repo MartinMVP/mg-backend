@@ -18,8 +18,8 @@ const storage = multer.diskStorage({
   },
 });
 
-const allowed = new Set(['.jpg', '.jpeg', '.png', '.webp']);
-const allowedMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const allowed = new Set(['.jpg', '.jpeg', '.png', '.webp', '.pdf']);
+const allowedMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 
 function fileFilter(
   _req: Request,
@@ -37,3 +37,4 @@ export const upload = multer({
   limits: { fileSize: MAX_MB * 1024 * 1024 },
   fileFilter,
 });
+

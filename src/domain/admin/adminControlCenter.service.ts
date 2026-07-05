@@ -128,6 +128,13 @@ export async function getAdminControlCenterDashboard() {
     soldListings,
     archivedListings,
     featuredListings,
+    marketplacePublishingAnimalsCreated,
+    marketplacePublishingListingsCreated,
+    marketplacePublishingListingsPublished,
+    marketplacePublishingListingsArchived,
+    marketplacePublishingMediaUploaded,
+    marketplacePublishingSlotsConsumed,
+    marketplacePublishingSlotsReleased,
     checkoutSessions,
     paymentRecords,
     successfulPayments,
@@ -258,6 +265,13 @@ export async function getAdminControlCenterDashboard() {
     Listing.countDocuments({ status: 'sold' }),
     Listing.countDocuments({ status: 'archived' }),
     Listing.countDocuments({ featured: true }),
+    Animal.countDocuments({ deletedAt: null }),
+    Listing.countDocuments(),
+    Listing.countDocuments({ status: 'published' }),
+    Listing.countDocuments({ status: 'archived' }),
+    Audit.countDocuments({ action: 'MEDIA_UPLOADED' }),
+    Audit.countDocuments({ action: 'MEMBERSHIP_CAPACITY_CONSUMED' }),
+    Audit.countDocuments({ action: 'MEMBERSHIP_CAPACITY_RELEASED' }),
     PaymentCheckoutSession.countDocuments(),
     PaymentRecord.countDocuments(),
     PaymentRecord.countDocuments({ status: 'succeeded' }),
@@ -460,6 +474,15 @@ export async function getAdminControlCenterDashboard() {
       soldListings,
       archivedListings,
       featuredListings,
+    },
+    marketplacePublishing: {
+      animalsCreated: marketplacePublishingAnimalsCreated,
+      listingsCreated: marketplacePublishingListingsCreated,
+      listingsPublished: marketplacePublishingListingsPublished,
+      listingsArchived: marketplacePublishingListingsArchived,
+      mediaUploaded: marketplacePublishingMediaUploaded,
+      membershipSlotsConsumed: marketplacePublishingSlotsConsumed,
+      membershipSlotsReleased: marketplacePublishingSlotsReleased,
     },
     payments: {
       checkoutSessions,
@@ -721,6 +744,7 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
 
 
 

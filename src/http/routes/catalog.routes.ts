@@ -18,6 +18,8 @@ r.delete('/animals/:id', requireAuth, ctrl.deleteAnimal);
 
 r.post('/listings', requireAuth, ctrl.createListing);
 r.patch('/listings/:id', requireAuth, ctrl.updateListing);
+r.patch('/listings/:id/publish', requireAuth, ctrl.publishListing);
+r.patch('/listings/:id/archive', requireAuth, ctrl.archiveListing);
 r.delete('/listings/:id', requireAuth, ctrl.deleteListing);
 
 // Catálogos maestros
@@ -29,3 +31,4 @@ r.post('/breeds', requireAuth, requireRole('admin', 'super'), ctrl.createBreed);
 r.post('/registries', requireAuth, requireRole('admin', 'super'), ctrl.createRegistry);
 
 export default r;
+
