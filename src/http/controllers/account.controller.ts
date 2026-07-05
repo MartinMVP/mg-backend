@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuctionResult } from '../../domain/auctionResults/auctionResult.model';
 import { FiscalProfile } from '../../domain/fiscalProfiles/fiscalProfile.model';
+import { Audit } from '../../domain/audit/audit.model';
 
 function auctionResultPopulate(includeBuyer = false) {
   const populate: any[] = [
@@ -73,6 +74,7 @@ export async function upsertFiscalProfile(req: Request, res: Response) {
     return res.status(400).json({ error: 'Código postal inválido' });
   }
 
+  const existing = await FiscalProfile.exists({ userId: user.sub });
   const profile = await FiscalProfile.findOneAndUpdate(
     { userId: user.sub },
     {
@@ -88,5 +90,9 @@ export async function upsertFiscalProfile(req: Request, res: Response) {
     { new: true, upsert: true, runValidators: true }
   );
 
+  await Audit.create({ actor: user.sub, action: existing ? 'FISCAL_PROFILE_UPDATED' : 'FISCAL_PROFILE_CREATED' });
+
   res.json(profile);
 }
+
+

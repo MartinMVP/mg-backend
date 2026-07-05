@@ -10,6 +10,8 @@ import { Auction } from '../auctions/auction.model';
 import { FiscalProfile } from '../fiscalProfiles/fiscalProfile.model';
 import { InvoiceDraft } from '../invoiceDrafts/invoiceDraft.model';
 import { InvoiceQueue } from '../invoiceQueue/invoiceQueue.model';
+import { InvoiceRecord } from '../invoiceRecords/invoiceRecord.model';
+import { InvoiceHistory } from '../invoiceRecords/invoiceHistory.model';
 import { Listing } from '../listings/listing.model';
 import { MembershipChangeLog } from '../memberships/membershipChangeLog.model';
 import { MembershipPlan } from '../memberships/membershipPlan.model';
@@ -143,6 +145,12 @@ export async function getAdminControlCenterDashboard() {
     invoiceQueue,
     invoiceQueuePending,
     fiscalProfiles,
+    fiscalMembershipInvoicesIssued,
+    fiscalMembershipInvoicesPending,
+    fiscalMembershipInvoicesFailed,
+    fiscalMembershipInvoicesCancelled,
+    fiscalMembershipProviderErrors,
+    fiscalMembershipRetriesExecuted,
     conversationsTotal,
     messagesTotal,
     activeConversations,
@@ -267,6 +275,12 @@ export async function getAdminControlCenterDashboard() {
     InvoiceQueue.countDocuments(),
     InvoiceQueue.countDocuments({ status: 'queued' }),
     FiscalProfile.countDocuments(),
+    InvoiceRecord.countDocuments({ membershipId: { $exists: true }, status: 'issued' }),
+    InvoiceRecord.countDocuments({ membershipId: { $exists: true }, status: { $in: ['pending', 'processing', 'cancel_requested', 'cancel_processing'] } }),
+    InvoiceRecord.countDocuments({ membershipId: { $exists: true }, status: { $in: ['failed', 'cancel_failed'] } }),
+    InvoiceRecord.countDocuments({ membershipId: { $exists: true }, status: 'cancelled' }),
+    Audit.countDocuments({ action: { $in: ['FISCAL_PROVIDER_ERROR', 'FISCAL_PROVIDER_TIMEOUT'] } }),
+    InvoiceHistory.countDocuments({ event: 'INVOICE_RETRY_EXECUTED' }),
     Conversation.countDocuments(),
     Message.countDocuments(),
     Conversation.countDocuments({ status: 'active' }),
@@ -472,6 +486,14 @@ export async function getAdminControlCenterDashboard() {
       invoiceDrafts,
       invoiceQueue,
       fiscalProfiles,
+    },
+    fiscalMembership: {
+      invoicesIssued: fiscalMembershipInvoicesIssued,
+      invoicesPending: fiscalMembershipInvoicesPending,
+      invoicesFailed: fiscalMembershipInvoicesFailed,
+      invoicesCancelled: fiscalMembershipInvoicesCancelled,
+      providerErrors: fiscalMembershipProviderErrors,
+      retriesExecuted: fiscalMembershipRetriesExecuted,
     },
     messaging: {
       conversationsTotal,
@@ -699,6 +721,7 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
 
 
 

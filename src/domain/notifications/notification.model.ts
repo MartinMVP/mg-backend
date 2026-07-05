@@ -26,7 +26,11 @@ export type NotificationType =
   | 'membership_suspended'
   | 'membership_activated_from_payment'
   | 'payment_confirmed'
-  | 'payment_failed';
+  | 'payment_failed'
+  | 'invoice_issued'
+  | 'invoice_failed'
+  | 'invoice_cancelled'
+  | 'invoice_pending';
 
 export interface INotification {
   userId: Types.ObjectId;
@@ -68,6 +72,10 @@ const NotificationSchema = new Schema<INotification>(
         'membership_activated_from_payment',
         'payment_confirmed',
         'payment_failed',
+        'invoice_issued',
+        'invoice_failed',
+        'invoice_cancelled',
+        'invoice_pending',
       ],
       required: true,
       index: true,
@@ -82,6 +90,7 @@ const NotificationSchema = new Schema<INotification>(
 NotificationSchema.index({ userId: 1, createdAt: -1 });
 
 export const Notification = model<INotification>('Notification', NotificationSchema);
+
 
 
 

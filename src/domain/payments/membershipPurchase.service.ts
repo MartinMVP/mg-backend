@@ -15,6 +15,8 @@ import { PaymentRecord } from './paymentRecord.model';
 import { PaymentWebhookLog } from './paymentWebhookLog.model';
 import { paymentAuditActions } from './payment.audit';
 import { PaymentConfirmed } from './paymentConfirmed.event';
+import { PaymentSettled } from './paymentSettled.event';
+import { handlePaymentSettled } from '../fiscalMembership/fiscalMembership.service';
 import { defaultStripeCheckoutClient, StripeCheckoutClient } from './stripePayment.service';
 import { getStripeConfig, StripeConfig, validateStripeConfig } from './stripe.config';
 import { verifyStripeWebhookSignature } from './stripeWebhook.service';
@@ -288,6 +290,21 @@ async function handleCheckoutCompleted(event: StripeEvent) {
     confirmedAt: processedAt,
   };
   await activateMembershipFromPaymentConfirmed(paymentConfirmed);
+
+  const paymentSettled: PaymentSettled = {
+    transactionId: transaction._id,
+    userId: transaction.userId,
+    membershipId: transaction.membershipId,
+    amount: transaction.amount,
+    currency: transaction.currency,
+    paidAt: transaction.processedAt,
+  };
+  try {
+    await handlePaymentSettled(paymentSettled);
+  } catch {
+    await Audit.create({ actor: String(transaction.userId), action: 'INVOICE_FAILED', transactionId: transaction._id });
+  }
+
   return { transaction };
 }
 
@@ -407,3 +424,4 @@ export async function getMembershipPaymentForUser(id: string, userId: string) {
   if (!Types.ObjectId.isValid(id)) return null;
   return MembershipPaymentTransaction.findOne({ _id: id, userId: toObjectId(userId) }).lean();
 }
+

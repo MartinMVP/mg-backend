@@ -15,7 +15,9 @@ import adminRoutes from './http/routes/admin';
 import membershipRoutes from './http/routes/membership.routes';
 import adminMembershipRoutes from './http/routes/admin.membership.routes';
 import paymentRoutes from './http/routes/payment.routes';
+import fiscalMembershipRoutes from './http/routes/fiscal.membership.routes';
 import adminPaymentRoutes from './http/routes/admin.payment.routes';
+import adminFiscalMembershipRoutes from './http/routes/admin.fiscalMembership.routes';
 import adminControlCenterRoutes from './http/routes/admin.controlCenter.routes';
 import adminPlatformConfigurationRoutes from './http/routes/admin.platformConfiguration.routes';
 import adminAOERoutes from './http/routes/admin.aoe.routes';
@@ -56,6 +58,7 @@ app.use('/', notificationsRoutes);
 app.use('/', accountRoutes);
 app.use('/', membershipRoutes);
 app.use('/', paymentRoutes);
+app.use('/', fiscalMembershipRoutes);
 app.use('/', salesRoutes);
 app.use('/messaging', messagingRoutes);
 app.use('/auction-listings', auctionListingRoutes);
@@ -64,6 +67,7 @@ app.use('/admin', adminRoutes);
 app.use('/admin', adminAuctionListingRoutes);
 app.use('/admin', adminMembershipRoutes);
 app.use('/admin', adminPaymentRoutes);
+app.use('/admin', adminFiscalMembershipRoutes);
 app.use('/admin', adminPlatformConfigurationRoutes);
 app.use('/admin', adminAOERoutes);
 app.use('/admin', adminAnalyticsRoutes);
@@ -116,3 +120,4 @@ if (env.swaggerEnabled) {
 app.use(errorHandler);
 
 export default app;
+

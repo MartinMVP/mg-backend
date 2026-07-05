@@ -591,6 +591,98 @@ paths:
       responses:
         '200': { description: OK }
         '404': { description: Not found }
+  /fiscal/memberships/invoice:
+    post:
+      summary: Request membership CFDI invoice
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transactionId]
+              properties:
+                transactionId: { type: string }
+      responses:
+        '201': { description: Invoice issued or queued }
+        '202': { description: Invoice failed but recoverable }
+        '404': { description: Payment transaction not found }
+
+  /fiscal/memberships/invoice/{id}:
+    get:
+      summary: Get membership invoice
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Invoice }
+        '404': { description: Not found }
+
+  /fiscal/memberships/history:
+    get:
+      summary: List membership fiscal history
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Fiscal history }
+
+  /fiscal/memberships/invoice/{id}/cancel:
+    post:
+      summary: Request membership invoice cancellation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Cancelled }
+        '409': { description: Invoice not issued }
+        '422': { description: Provider cancellation error }
+
+  /admin/fiscal/invoices:
+    get:
+      summary: Admin list membership fiscal invoices
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Invoices }
+
+  /admin/fiscal/invoices/{id}:
+    get:
+      summary: Admin get membership fiscal invoice
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Invoice }
+        '404': { description: Not found }
+
+  /admin/fiscal/failed:
+    get:
+      summary: Admin list failed membership fiscal invoices
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Failed invoices }
+
+  /admin/fiscal/reprocess/{id}:
+    post:
+      summary: Admin reprocess membership fiscal invoice
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Reprocessed }
+        '202': { description: Still failed but recoverable }
+        '409': { description: Invoice not reprocessable }
 components:
   securitySchemes:
     bearerAuth:
@@ -598,4 +690,5 @@ components:
       scheme: bearer
       bearerFormat: JWT
 
+
 
