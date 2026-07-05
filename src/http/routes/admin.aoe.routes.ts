@@ -12,6 +12,12 @@ import {
   setAOEDecisionProposalStatus,
 } from '../../domain/aoe/aoeDecisionProposal.service';
 import { listAOEEvidenceForCase } from '../../domain/aoe/aoeEvidence.service';
+import {
+  getAOEOperationalDecision,
+  getOrCreateAOEOperationalDecisionForCase,
+  listAOEOperationalDecisions,
+  setAOEOperationalDecisionPackageStatus,
+} from '../../domain/aoeOperationalDecisions/aoeOperationalDecision.service';
 import { requireAuth } from '../middlewares/auth';
 import { requireRole } from '../middlewares/requireRole';
 
@@ -83,6 +89,106 @@ router.get('/aoe/cases/:id/proposals', async (req, res, next) => {
     await getAOECase(String(req.params.id));
     const proposals = await listAOEDecisionProposalsForCase(String(req.params.id));
     res.json({ proposals });
+  } catch (error) {
+    try {
+      return handleAOEError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/aoe/operational-decisions', async (req, res, next) => {
+  try {
+    const result = await listAOEOperationalDecisions({
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    res.json(result);
+  } catch (error) {
+    try {
+      return handleAOEError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/aoe/operational-decisions/:id', async (req, res, next) => {
+  try {
+    const odp = await getAOEOperationalDecision(String(req.params.id));
+    res.json(odp);
+  } catch (error) {
+    try {
+      return handleAOEError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.get('/aoe/cases/:id/operational-decision', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const odp = await getOrCreateAOEOperationalDecisionForCase({
+      aoeCaseId: String(req.params.id),
+      actorId: user.sub,
+    });
+    res.json(odp);
+  } catch (error) {
+    try {
+      return handleAOEError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.post('/aoe/operational-decisions/:id/view', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const odp = await setAOEOperationalDecisionPackageStatus({
+      id: String(req.params.id),
+      actorId: user.sub,
+      status: 'viewed',
+    });
+    res.json(odp);
+  } catch (error) {
+    try {
+      return handleAOEError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.post('/aoe/operational-decisions/:id/escalate', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const odp = await setAOEOperationalDecisionPackageStatus({
+      id: String(req.params.id),
+      actorId: user.sub,
+      status: 'escalated',
+    });
+    res.json(odp);
+  } catch (error) {
+    try {
+      return handleAOEError(res, error);
+    } catch (nextError) {
+      return next(nextError);
+    }
+  }
+});
+
+router.post('/aoe/operational-decisions/:id/close', async (req, res, next) => {
+  try {
+    const user = (req as any).user;
+    const odp = await setAOEOperationalDecisionPackageStatus({
+      id: String(req.params.id),
+      actorId: user.sub,
+      status: 'closed',
+    });
+    res.json(odp);
   } catch (error) {
     try {
       return handleAOEError(res, error);

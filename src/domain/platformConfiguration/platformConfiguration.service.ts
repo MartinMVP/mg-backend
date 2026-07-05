@@ -222,6 +222,18 @@ export const sandboxDefaultConfigurations: Array<{
     value: 1800,
     description: 'Sandbox Analytics freshness stale threshold in seconds',
   },
+  {
+    key: 'aoe.decisionEngineVersion',
+    valueType: 'string',
+    value: 'AOE Decision Engine v1.0',
+    description: 'Sandbox AOE Operational Decision Package engine version',
+  },
+  {
+    key: 'aoe.operationalDecisionExpirationDays',
+    valueType: 'number',
+    value: 14,
+    description: 'Sandbox AOE Operational Decision Package expiration in days',
+  },
 ];
 
 function reject(status: number, message: string): never {
@@ -406,5 +418,6 @@ export async function seedSandboxDefaultConfigurations(changedBy: string | Types
   }
   return created;
 }
+
 
 

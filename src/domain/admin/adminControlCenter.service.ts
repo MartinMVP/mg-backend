@@ -25,6 +25,7 @@ import { PaymentWebhookLog } from '../payments/paymentWebhookLog.model';
 import { PlatformConfiguration } from '../platformConfiguration/platformConfiguration.model';
 import { AOECase } from '../aoe/aoeCase.model';
 import { AOEDecisionProposal } from '../aoe/aoeDecisionProposal.model';
+import { AOEOperationalDecisionPackage } from '../aoeOperationalDecisions/aoeOperationalDecision.model';
 import { AnalyticsEvent } from '../analytics/analyticsEvent.model';
 import { getAnalyticsQualityTrend, getAnalyticsReadiness } from '../analytics/analyticsQuality.service';
 import { Transaction } from '../transactions/transaction.model';
@@ -160,6 +161,16 @@ export async function getAdminControlCenterDashboard() {
     viewedAOEProposals,
     escalatedAOEProposals,
     closedAOEProposals,
+    totalGeneratedAOEOperationalDecisions,
+    viewedAOEOperationalDecisions,
+    escalatedAOEOperationalDecisions,
+    closedAOEOperationalDecisions,
+    lowRiskAOEOperationalDecisions,
+    mediumRiskAOEOperationalDecisions,
+    highRiskAOEOperationalDecisions,
+    criticalRiskAOEOperationalDecisions,
+    averageAOEOperationalDecisionConfidence,
+    degradedModeAOEOperationalDecisions,
     totalAnalyticsEvents,
     operationalAnalyticsEvents,
     businessAnalyticsEvents,
@@ -243,6 +254,18 @@ export async function getAdminControlCenterDashboard() {
     AOEDecisionProposal.countDocuments({ status: 'viewed' }),
     AOEDecisionProposal.countDocuments({ status: 'escalated' }),
     AOEDecisionProposal.countDocuments({ status: 'closed' }),
+    AOEOperationalDecisionPackage.countDocuments(),
+    AOEOperationalDecisionPackage.countDocuments({ status: 'viewed' }),
+    AOEOperationalDecisionPackage.countDocuments({ status: 'escalated' }),
+    AOEOperationalDecisionPackage.countDocuments({ status: 'closed' }),
+    AOEOperationalDecisionPackage.countDocuments({ riskLevel: 'low' }),
+    AOEOperationalDecisionPackage.countDocuments({ riskLevel: 'medium' }),
+    AOEOperationalDecisionPackage.countDocuments({ riskLevel: 'high' }),
+    AOEOperationalDecisionPackage.countDocuments({ riskLevel: 'critical' }),
+    AOEOperationalDecisionPackage.aggregate<{ _id: null; averageConfidence: number }>([
+      { $group: { _id: null, averageConfidence: { $avg: '$confidence.overall' } } },
+    ]),
+    AOEOperationalDecisionPackage.countDocuments({ 'qualitySummary.recommendedMode': { $ne: 'normal' } }),
     AnalyticsEvent.countDocuments(),
     AnalyticsEvent.countDocuments({ analyticsCategory: 'operational' }),
     AnalyticsEvent.countDocuments({ analyticsCategory: 'business' }),
@@ -401,6 +424,18 @@ export async function getAdminControlCenterDashboard() {
       escalatedProposals: escalatedAOEProposals,
       closedProposals: closedAOEProposals,
     },
+    aoeOperationalDecisions: {
+      totalGenerated: totalGeneratedAOEOperationalDecisions,
+      viewed: viewedAOEOperationalDecisions,
+      escalated: escalatedAOEOperationalDecisions,
+      closed: closedAOEOperationalDecisions,
+      lowRisk: lowRiskAOEOperationalDecisions,
+      mediumRisk: mediumRiskAOEOperationalDecisions,
+      highRisk: highRiskAOEOperationalDecisions,
+      criticalRisk: criticalRiskAOEOperationalDecisions,
+      averageConfidence: averageAOEOperationalDecisionConfidence[0]?.averageConfidence || 0,
+      degradedModeUsage: degradedModeAOEOperationalDecisions,
+    },
     analytics: {
       totalEvents: totalAnalyticsEvents,
       operationalEvents: operationalAnalyticsEvents,
@@ -511,6 +546,7 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
 
 
 
