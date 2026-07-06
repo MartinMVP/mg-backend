@@ -164,6 +164,11 @@ export async function getAdminControlCenterDashboard() {
     archivedConversations,
     closedConversations,
     conversationsWithUnreadMessages,
+    commercialMessagingConversationsCreated,
+    commercialMessagingMessagesSent,
+    commercialMessagingConversationsArchived,
+    commercialMessagingConversationsClosed,
+    commercialMessagingActiveConversations,
     auctionListingsTotal,
     activeAuctionListings,
     closedAuctionListings,
@@ -301,6 +306,11 @@ export async function getAdminControlCenterDashboard() {
     Conversation.countDocuments({ status: 'archived' }),
     Conversation.countDocuments({ status: 'closed' }),
     ConversationParticipant.distinct('conversationId', { unreadCount: { $gt: 0 } }),
+    Conversation.countDocuments({ type: 'listing' }),
+    Audit.countDocuments({ action: 'MESSAGE_SENT' }),
+    Conversation.countDocuments({ type: 'listing', status: 'archived' }),
+    Conversation.countDocuments({ type: 'listing', status: 'closed' }),
+    Conversation.countDocuments({ type: 'listing', status: 'active' }),
     AuctionListing.countDocuments(),
     AuctionListing.countDocuments({ status: 'active' }),
     AuctionListing.countDocuments({ status: 'closed' }),
@@ -527,6 +537,13 @@ export async function getAdminControlCenterDashboard() {
       averageMessagesPerConversation: conversationsTotal > 0 ? messagesTotal / conversationsTotal : 0,
       conversationsWithUnreadMessages: conversationsWithUnreadMessages.length,
     },
+    commercialMessaging: {
+      conversationsCreated: commercialMessagingConversationsCreated,
+      messagesSent: commercialMessagingMessagesSent,
+      conversationsArchived: commercialMessagingConversationsArchived,
+      conversationsClosed: commercialMessagingConversationsClosed,
+      activeConversations: commercialMessagingActiveConversations,
+    },
     auctionListings: {
       total: auctionListingsTotal,
       active: activeAuctionListings,
@@ -744,6 +761,8 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
+
 
 
 

@@ -25,6 +25,7 @@ import adminAnalyticsRoutes from './http/routes/admin.analytics.routes';
 import adminKnowledgeRoutes from './http/routes/admin.knowledge.routes';
 import stripeWebhookRoutes from './http/routes/stripe.webhook.routes';
 import messagingRoutes from './http/routes/messaging.routes';
+import commercialMessagingRoutes from './http/routes/commercialMessaging.routes';
 import auctionListingRoutes from './http/routes/auctionListing.routes';
 import auctionSanctionRoutes from './http/routes/auctionSanction.routes';
 import adminAuctionListingRoutes from './http/routes/admin.auctionListing.routes';
@@ -62,6 +63,7 @@ app.use('/', paymentRoutes);
 app.use('/', fiscalMembershipRoutes);
 app.use('/', salesRoutes);
 app.use('/messaging', messagingRoutes);
+app.use('/messages', commercialMessagingRoutes);
 app.use('/auction-listings', auctionListingRoutes);
 app.use('/auction-sanctions', auctionSanctionRoutes);
 app.use('/admin', adminRoutes);
@@ -121,5 +123,6 @@ if (env.swaggerEnabled) {
 app.use(errorHandler);
 
 export default app;
+
 
 

@@ -713,6 +713,111 @@ paths:
         '200': { description: Reprocessed }
         '202': { description: Still failed but recoverable }
         '409': { description: Invoice not reprocessable }
+
+  /messages/conversations:
+    post:
+      summary: Create a listing conversation with the seller
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [listingId]
+              properties:
+                listingId: { type: string }
+      responses:
+        '201': { description: Conversation created }
+        '200': { description: Existing active conversation reused }
+        '400': { description: Invalid listing request }
+        '403': { description: Membership or authorization denied }
+        '404': { description: Listing not found }
+    get:
+      summary: List authenticated user's listing conversations
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200': { description: Conversation list }
+
+  /messages/conversations/{id}:
+    get:
+      summary: Get a listing conversation and immutable message history
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200': { description: Conversation detail }
+        '403': { description: Participant required }
+        '404': { description: Conversation not found }
+
+  /messages/conversations/{id}/messages:
+    post:
+      summary: Send an immutable message in a listing conversation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string }
+                metadata: { type: object }
+      responses:
+        '201': { description: Message sent }
+        '400': { description: Message body required }
+        '403': { description: Participant required }
+        '404': { description: Conversation not found }
+
+  /messages/conversations/{id}/archive:
+    patch:
+      summary: Archive a listing conversation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Conversation archived }
+        '403': { description: Participant required }
+        '404': { description: Conversation not found }
+
+  /messages/conversations/{id}/close:
+    patch:
+      summary: Close a listing conversation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Conversation closed }
+        '403': { description: Participant required }
+        '404': { description: Conversation not found }
 components:
   securitySchemes:
     bearerAuth:

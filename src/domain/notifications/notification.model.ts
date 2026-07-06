@@ -31,7 +31,9 @@ export type NotificationType =
   | 'invoice_failed'
   | 'invoice_cancelled'
   | 'invoice_pending'
-  | 'listing_published';
+  | 'listing_published'
+  | 'conversation_created'
+  | 'message_received';
 
 export interface INotification {
   userId: Types.ObjectId;
@@ -78,6 +80,8 @@ const NotificationSchema = new Schema<INotification>(
         'invoice_cancelled',
         'invoice_pending',
         'listing_published',
+        'conversation_created',
+        'message_received',
       ],
       required: true,
       index: true,
@@ -92,6 +96,7 @@ const NotificationSchema = new Schema<INotification>(
 NotificationSchema.index({ userId: 1, createdAt: -1 });
 
 export const Notification = model<INotification>('Notification', NotificationSchema);
+
 
 
 

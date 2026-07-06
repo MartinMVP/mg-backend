@@ -45,6 +45,17 @@ messageSchema.pre('validate', function () {
   }
 });
 
+function rejectMessageMutation(this: any, next: (error?: Error) => void) {
+  next(new Error('message_immutable'));
+}
+
+messageSchema.pre('findOneAndUpdate', rejectMessageMutation);
+messageSchema.pre('updateOne', rejectMessageMutation);
+messageSchema.pre('updateMany', rejectMessageMutation);
+messageSchema.pre('deleteOne', rejectMessageMutation);
+messageSchema.pre('deleteMany', rejectMessageMutation);
+messageSchema.pre('findOneAndDelete', rejectMessageMutation);
+
 messageSchema.index({ conversationId: 1, createdAt: 1 });
 messageSchema.index(
   { conversationId: 1, eventKey: 1 },
@@ -55,3 +66,4 @@ messageSchema.index(
 );
 
 export const Message = model<IMessage>('Message', messageSchema);
+
