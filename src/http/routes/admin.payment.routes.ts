@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import { Types } from 'mongoose';
 import { requireAuth } from '../middlewares/auth';
 import { requireRole } from '../middlewares/requireRole';
@@ -12,6 +12,7 @@ import { MembershipPaymentTransaction } from '../../domain/payments/membershipPa
 import { DunningState } from '../../domain/payments/dunningState.model';
 import { processDunningDue } from '../../domain/payments/dunning.service';
 import { listReconciliations, reconcilePayments } from '../../domain/payments/commercialRevenue.service';
+import { Audit } from '../../domain/audit/audit.model';
 
 const router = Router();
 
@@ -171,6 +172,11 @@ router.post('/payments/dunning/process-due', async (_req, res) => {
 router.post('/payments/reconcile', async (req, res) => {
   const user = (req as any).user;
   const result = await reconcilePayments(user.sub, String(req.body?.provider || 'internal'));
+  await Audit.create({
+    actor: user.sub,
+    action: 'ADMIN_PAYMENT_RECONCILED',
+    metadata: { reconciliationId: String((result as any)._id) },
+  } as any);
   res.status(201).json(result);
 });
 

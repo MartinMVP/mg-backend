@@ -991,6 +991,125 @@ paths:
         '200': { description: Cancellation confirmed }
         '409': { description: Invoice not cancellable }
 
+  /admin/dashboard:
+    get:
+      summary: Operational Workspace dashboard
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Operational KPIs and workspace summaries }
+
+  /admin/operations/queue:
+    get:
+      summary: Operational queue
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Consolidated operational queue }
+
+  /admin/operations/needs-attention:
+    get:
+      summary: Needs-attention queue
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Operational issues requiring attention }
+
+  /admin/users:
+    get:
+      summary: Users workspace
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Paginated users }
+
+  /admin/users/{id}/suspend:
+    post:
+      summary: Suspend user from Operational Workspace
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: User suspended }
+
+  /admin/memberships:
+    get:
+      summary: Membership Workspace
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Paginated memberships }
+
+  /admin/memberships/{id}:
+    patch:
+      summary: Update membership operational status
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string }
+      responses:
+        '200': { description: Membership updated }
+
+  /admin/listings:
+    get:
+      summary: Marketplace Workspace
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Paginated listings }
+
+  /admin/listings/{id}/archive:
+    post:
+      summary: Archive listing from Operational Workspace
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Listing archived }
+
+  /admin/conversations:
+    get:
+      summary: Messaging Workspace
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Paginated conversations }
+
+  /admin/conversations/{id}/close:
+    post:
+      summary: Close conversation from Operational Workspace
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Conversation closed }
+
+  /admin/fiscal:
+    get:
+      summary: Fiscal Workspace
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Paginated fiscal operations and KPIs }
+
+  /admin/fiscal/recover:
+    post:
+      summary: Recover transient fiscal failures
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Fiscal recovery result }
+
 components:
   securitySchemes:
     bearerAuth:
