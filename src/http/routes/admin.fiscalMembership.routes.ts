@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { requireAuth } from '../middlewares/auth';
 import { requireRole } from '../middlewares/requireRole';
 import {
@@ -7,13 +7,22 @@ import {
   listFailedMembershipInvoices,
   reprocessMembershipInvoice,
 } from '../../domain/fiscalMembership/fiscalMembership.service';
+import { listAdminFiscalOperations } from '../../domain/fiscalOperations/fiscalPlatform.service';
 
 const router = Router();
 
 router.use(requireAuth, requireRole('admin', 'super'));
 
 router.get('/fiscal/invoices', async (req, res) => {
-  res.json(await listAdminMembershipInvoices(req.query));
+  const legacyInvoices = await listAdminMembershipInvoices(req.query);
+  const platformInvoices = await listAdminFiscalOperations(req.query);
+  if (!platformInvoices.total) return res.json(legacyInvoices);
+  const legacyItems = Array.isArray((legacyInvoices as any).items) ? (legacyInvoices as any).items : [];
+  res.json({
+    ...legacyInvoices,
+    items: [...platformInvoices.items, ...legacyItems],
+    total: platformInvoices.total + Number((legacyInvoices as any).total || legacyItems.length || 0),
+  });
 });
 
 router.get('/fiscal/failed', async (_req, res) => {
@@ -32,3 +41,4 @@ router.post('/fiscal/reprocess/:id', async (req, res) => {
 });
 
 export default router;
+

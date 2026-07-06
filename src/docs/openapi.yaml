@@ -675,7 +675,7 @@ paths:
 
   /admin/fiscal/invoices:
     get:
-      summary: Admin list membership fiscal invoices
+      summary: Admin list fiscal platform and membership invoices
       security: [{ bearerAuth: [] }]
       responses:
         '200': { description: Invoices }
@@ -924,6 +924,73 @@ paths:
       security: [{ bearerAuth: [] }]
       responses:
         '200': { description: Reconciliation records }
+
+  /fiscal/operations:
+    post:
+      summary: Create a FiscalOperation from a settled commercial operation
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [commercialOperationId]
+              properties:
+                commercialOperationId: { type: string }
+                provider: { type: string, enum: [mock, facturama, future], default: mock }
+                metadata: { type: object }
+      responses:
+        '201': { description: Fiscal operation created and invoice emission attempted }
+        '200': { description: Existing fiscal operation reused }
+        '409': { description: PaymentSettled is required }
+
+  /fiscal/operations/{id}:
+    get:
+      summary: Get a FiscalOperation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Fiscal operation }
+        '404': { description: Fiscal operation not found }
+
+  /fiscal/history/{operationId}:
+    get:
+      summary: Get reproducible fiscal history by FiscalOperation or CommercialOperation id
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: operationId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Fiscal operation history }
+        '404': { description: Fiscal history not found }
+
+  /fiscal/invoices/{id}/cancel:
+    post:
+      summary: Request invoice cancellation through Fiscal Platform
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, default: '02' }
+      responses:
+        '200': { description: Cancellation confirmed }
+        '409': { description: Invoice not cancellable }
+
 components:
   securitySchemes:
     bearerAuth:
