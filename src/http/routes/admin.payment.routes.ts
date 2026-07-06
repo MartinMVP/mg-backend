@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { Types } from 'mongoose';
 import { requireAuth } from '../middlewares/auth';
 import { requireRole } from '../middlewares/requireRole';
@@ -11,6 +11,7 @@ import { PaymentWebhookLog } from '../../domain/payments/paymentWebhookLog.model
 import { MembershipPaymentTransaction } from '../../domain/payments/membershipPaymentTransaction.model';
 import { DunningState } from '../../domain/payments/dunningState.model';
 import { processDunningDue } from '../../domain/payments/dunning.service';
+import { listReconciliations, reconcilePayments } from '../../domain/payments/commercialRevenue.service';
 
 const router = Router();
 
@@ -167,6 +168,16 @@ router.post('/payments/dunning/process-due', async (_req, res) => {
   res.json(result);
 });
 
+router.post('/payments/reconcile', async (req, res) => {
+  const user = (req as any).user;
+  const result = await reconcilePayments(user.sub, String(req.body?.provider || 'internal'));
+  res.status(201).json(result);
+});
+
+router.get('/payments/reconciliation', async (req, res) => {
+  res.json(await listReconciliations(req.query));
+});
+
 router.get('/payments/:id', async (req, res) => {
   const id = String(req.params.id);
   if (!Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'invalid_payment_id' });
@@ -179,5 +190,6 @@ router.get('/payments/:id', async (req, res) => {
 });
 
 export default router;
+
 
 

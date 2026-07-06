@@ -1,4 +1,4 @@
-import { Schema, model, Types } from 'mongoose';
+﻿import { Schema, model, Types } from 'mongoose';
 
 export type NotificationType =
   | 'auction_won'
@@ -27,6 +27,8 @@ export type NotificationType =
   | 'membership_activated_from_payment'
   | 'payment_confirmed'
   | 'payment_failed'
+  | 'payment_settled'
+  | 'refund_processed'
   | 'invoice_issued'
   | 'invoice_failed'
   | 'invoice_cancelled'
@@ -75,6 +77,8 @@ const NotificationSchema = new Schema<INotification>(
         'membership_activated_from_payment',
         'payment_confirmed',
         'payment_failed',
+        'payment_settled',
+        'refund_processed',
         'invoice_issued',
         'invoice_failed',
         'invoice_cancelled',
@@ -96,6 +100,7 @@ const NotificationSchema = new Schema<INotification>(
 NotificationSchema.index({ userId: 1, createdAt: -1 });
 
 export const Notification = model<INotification>('Notification', NotificationSchema);
+
 
 
 

@@ -1,4 +1,4 @@
-import { Audit } from '../audit/audit.model';
+﻿import { Audit } from '../audit/audit.model';
 import { Animal } from '../animals/animal.model';
 import { AuctionBid } from '../auctionListings/auctionBid.model';
 import { AuctionListing } from '../auctionListings/auctionListing.model';
@@ -27,6 +27,10 @@ import { MembershipPaymentSession } from '../payments/membershipPaymentSession.m
 import { MembershipPaymentTransaction } from '../payments/membershipPaymentTransaction.model';
 import { PaymentRecord } from '../payments/paymentRecord.model';
 import { PaymentWebhookLog } from '../payments/paymentWebhookLog.model';
+import { CommercialOperation } from '../payments/commercialOperation.model';
+import { PaymentTransaction } from '../payments/paymentTransaction.model';
+import { RefundRecord } from '../payments/refundRecord.model';
+import { ReconciliationRecord } from '../payments/reconciliationRecord.model';
 import { PlatformConfiguration } from '../platformConfiguration/platformConfiguration.model';
 import { AOECase } from '../aoe/aoeCase.model';
 import { AOEDecisionProposal } from '../aoe/aoeDecisionProposal.model';
@@ -169,6 +173,13 @@ export async function getAdminControlCenterDashboard() {
     commercialMessagingConversationsArchived,
     commercialMessagingConversationsClosed,
     commercialMessagingActiveConversations,
+    commercialRevenueOperationsCreated,
+    commercialRevenuePaymentsCreated,
+    commercialRevenuePaymentsSettled,
+    commercialRevenuePaymentsFailed,
+    commercialRevenueRefundsProcessed,
+    commercialRevenueReconciliationsExecuted,
+    commercialRevenueProviderErrors,
     auctionListingsTotal,
     activeAuctionListings,
     closedAuctionListings,
@@ -311,6 +322,13 @@ export async function getAdminControlCenterDashboard() {
     Conversation.countDocuments({ type: 'listing', status: 'archived' }),
     Conversation.countDocuments({ type: 'listing', status: 'closed' }),
     Conversation.countDocuments({ type: 'listing', status: 'active' }),
+    CommercialOperation.countDocuments(),
+    PaymentTransaction.countDocuments(),
+    PaymentTransaction.countDocuments({ status: 'settled' }),
+    PaymentTransaction.countDocuments({ status: 'failed' }),
+    RefundRecord.countDocuments({ status: 'processed' }),
+    ReconciliationRecord.countDocuments(),
+    PaymentWebhookLog.countDocuments({ processed: false, lastError: { $exists: true, $ne: '' } }),
     AuctionListing.countDocuments(),
     AuctionListing.countDocuments({ status: 'active' }),
     AuctionListing.countDocuments({ status: 'closed' }),
@@ -544,6 +562,15 @@ export async function getAdminControlCenterDashboard() {
       conversationsClosed: commercialMessagingConversationsClosed,
       activeConversations: commercialMessagingActiveConversations,
     },
+    commercialRevenue: {
+      operationsCreated: commercialRevenueOperationsCreated,
+      paymentsCreated: commercialRevenuePaymentsCreated,
+      paymentsSettled: commercialRevenuePaymentsSettled,
+      paymentsFailed: commercialRevenuePaymentsFailed,
+      refundsProcessed: commercialRevenueRefundsProcessed,
+      reconciliationsExecuted: commercialRevenueReconciliationsExecuted,
+      providerErrors: commercialRevenueProviderErrors,
+    },
     auctionListings: {
       total: auctionListingsTotal,
       active: activeAuctionListings,
@@ -761,6 +788,7 @@ export async function getAdminControlCenterAlerts(limit = 25) {
       };
     });
 }
+
 
 
 

@@ -818,6 +818,112 @@ paths:
         '200': { description: Conversation closed }
         '403': { description: Participant required }
         '404': { description: Conversation not found }
+
+  /payments/operations:
+    post:
+      summary: Create a commercial operation
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operationType, referenceType, referenceId, amount]
+              properties:
+                operationType: { type: string, enum: [membership, featured_listing, advertising, sponsorship, auction_fee, service] }
+                referenceType: { type: string }
+                referenceId: { type: string }
+                amount: { type: number }
+                currency: { type: string, default: MXN }
+                metadata: { type: object }
+      responses:
+        '201': { description: Commercial operation created }
+        '400': { description: Invalid operation }
+        '409': { description: Operation type not enabled }
+
+  /payments/operations/{id}:
+    get:
+      summary: Get a commercial operation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Commercial operation }
+        '404': { description: Operation not found }
+
+  /payments/checkout:
+    post:
+      summary: Create a Revenue-owned payment intent and checkout
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operationId]
+              properties:
+                operationId: { type: string }
+      responses:
+        '201': { description: Payment intent created }
+        '404': { description: Operation not found }
+        '409': { description: Operation is not payable }
+
+  /payments/webhook:
+    post:
+      summary: Process a signed provider webhook through Revenue
+      parameters:
+        - in: header
+          name: x-payment-signature
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Webhook processed or duplicate ignored }
+        '400': { description: Signature or payload invalid }
+
+  /payments/transactions:
+    get:
+      summary: List Revenue payment transactions
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Transactions }
+
+  /payments/refunds:
+    post:
+      summary: Execute a business-approved refund through Revenue
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operationId]
+              properties:
+                operationId: { type: string }
+                amount: { type: number }
+                reason: { type: string }
+      responses:
+        '201': { description: Refund processed }
+        '409': { description: Refund rejected by operation state }
+
+  /admin/payments/reconcile:
+    post:
+      summary: Execute Revenue reconciliation
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Reconciliation completed }
+
+  /admin/payments/reconciliation:
+    get:
+      summary: List Revenue reconciliation records
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Reconciliation records }
 components:
   securitySchemes:
     bearerAuth:
