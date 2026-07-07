@@ -197,6 +197,31 @@ describe('membership admin operations', () => {
     expect(JSON.stringify(payments.body)).not.toContain('sk_');
   });
 
+  it('cancels subscriptions through the canonical membership change flow', async () => {
+    const { token } = await adminContext();
+    const user = await createTestUser();
+    const pro = await createPlan('pro-canonical-cancel', 499);
+    const membership = await createMembership(user, pro, 'active');
+
+    const res = await request(app)
+      .post(`/admin/membership/subscriptions/${membership._id}/cancel`)
+      .set('Authorization', bearer(token))
+      .send({ reason: 'Admin requested cancellation' })
+      .expect(200);
+
+    const reloaded = await UserMembership.findById(membership._id);
+    expect(res.body.scheduled).toBe(true);
+    expect(reloaded?.status).toBe('active');
+    expect(reloaded?.cancelAtPeriodEnd).toBe(true);
+    expect(reloaded?.pendingChangeType).toBe('cancellation');
+    expect(await MembershipChangeLog.exists({
+      userId: user._id,
+      userMembershipId: membership._id,
+      changeType: 'cancellation_scheduled',
+      source: 'admin',
+    })).toBeTruthy();
+    expect(await Audit.exists({ actor: String(user._id), action: 'MEMBERSHIP_CANCELLATION_SCHEDULED' })).toBeTruthy();
+  });
   it('exports memberships as CSV for admins', async () => {
     const { token } = await adminContext('super');
     const user = await createTestUser();

@@ -342,20 +342,5 @@ router.post('/membership/subscriptions/:id/suspend', async (req, res) => {
   res.json(membership);
 });
 
-router.post('/membership/subscriptions/:id/cancel', async (req, res) => {
-  const user = (req as any).user;
-  const id = String(req.params.id);
-  if (!isValidObjectId(id)) return res.status(400).json({ error: 'Invalid membership id' });
-
-  const membership = await UserMembership.findByIdAndUpdate(
-    id,
-    { $set: { status: 'cancelled', cancelledAt: new Date() } },
-    { new: true, runValidators: true }
-  );
-  if (!membership) return res.status(404).json({ error: 'Not found' });
-
-  await Audit.create({ actor: user?.sub || 'system', action: membershipAuditActions.cancelled });
-  res.json(membership);
-});
 
 export default router;
