@@ -237,10 +237,10 @@ describe('messaging routes', () => {
     await expect(Audit.exists({ action: messagingAuditActions.messageSent })).resolves.toBeTruthy();
   });
 
-  it('creates deduplicated system messages with sanitized metadata', async () => {
+  it('rejects system messages from user-accessible messaging endpoints', async () => {
     const { token, conversation } = await createConversationViaListing();
 
-    const sent = await request(app)
+    await request(app)
       .post(`/messaging/conversations/${conversation._id}/messages`)
       .set('Authorization', bearer(token))
       .send({
@@ -254,27 +254,13 @@ describe('messaging routes', () => {
           payload: { raw: true },
         },
       })
-      .expect(201);
+      .expect(403)
+      .expect((res) => {
+        expect(res.body.error).toBe('system_message_forbidden');
+      });
 
-    expect(sent.body.type).toBe('system');
-    expect(sent.body.senderId).toBeUndefined();
-    expect(sent.body.eventKey).toBe('conversation-started');
-    expect(sent.body.metadata).toEqual({ notificationId: 'notif_1' });
-
-    const duplicate = await request(app)
-      .post(`/messaging/conversations/${conversation._id}/messages`)
-      .set('Authorization', bearer(token))
-      .send({
-        type: 'system',
-        source: 'system',
-        body: 'Duplicado',
-        eventKey: 'conversation-started',
-      })
-      .expect(201);
-
-    expect(String(duplicate.body._id)).toBe(String(sent.body._id));
-    expect(await Message.countDocuments({ type: 'system' })).toBe(1);
-    await expect(Audit.exists({ action: messagingAuditActions.systemMessageCreated })).resolves.toBeTruthy();
+    expect(await Message.countDocuments({ type: 'system' })).toBe(0);
+    await expect(Audit.exists({ action: messagingAuditActions.systemMessageCreated })).resolves.toBeFalsy();
   });
 
   it('marks a participant conversation as read and blocks outsiders', async () => {

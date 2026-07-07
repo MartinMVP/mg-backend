@@ -162,6 +162,16 @@ describe('Capability 13.4 Comunicacion Comercial', () => {
       .expect(201);
     const conversationId = created.body.conversation._id;
 
+    await request(app)
+      .post(`/messages/conversations/${conversationId}/messages`)
+      .set('Authorization', bearer(tokenFor(buyer)))
+      .send({ type: 'system', body: 'No permitido.', eventKey: 'forbidden-system' })
+      .expect(403)
+      .expect((res) => {
+        expect(res.body.error).toBe('system_message_forbidden');
+      });
+    expect(await Message.countDocuments({ conversationId, type: 'system' })).toBe(0);
+
     const buyerMessage = await request(app)
       .post(`/messages/conversations/${conversationId}/messages`)
       .set('Authorization', bearer(tokenFor(buyer)))

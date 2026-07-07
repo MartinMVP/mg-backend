@@ -20,6 +20,7 @@ function handleCommercialMessagingError(res: any, error: unknown) {
   if (message === 'conversation_not_found') return res.status(404).json({ error: message });
   if (message === 'cannot_message_self') return res.status(400).json({ error: message });
   if (message === 'message_body_required') return res.status(400).json({ error: message });
+  if (message === 'system_message_forbidden') return res.status(403).json({ error: message });
   if (message === 'forbidden') return res.status(403).json({ error: message });
   if (status) return res.status(status).json({ error: message });
   throw error;
@@ -56,6 +57,7 @@ router.get('/conversations/:id', requireAuth, async (req, res, next) => {
 router.post('/conversations/:id/messages', requireAuth, async (req, res, next) => {
   try {
     const user = (req as any).user;
+    if (req.body?.type === 'system') throw Object.assign(new Error('system_message_forbidden'), { status: 403 });
     const message = await sendListingConversationMessage({
       conversationId: String(req.params.id),
       senderId: user.sub,

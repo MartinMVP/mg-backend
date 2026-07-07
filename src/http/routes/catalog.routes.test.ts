@@ -238,6 +238,31 @@ describe('Capability 13.3 Publicar Ganado', () => {
     expect(cannotPublish.body.error).toBe('listing_cannot_publish');
   });
 
+  it('hides public listing detail for non-published states', async () => {
+    const owner = await createTestUser('user');
+    const breed = await createBreed();
+    const animal = await Animal.create({
+      owner: owner._id,
+      tag: `VIS-${new Types.ObjectId().toString().slice(-8)}`,
+      breed: breed._id,
+      sex: 'M',
+      location: { state: 'Sonora' },
+    });
+
+    const published = await Listing.create({
+      animal: animal._id,
+      seller: owner._id,
+      price: 1000,
+      status: 'published',
+      publishedAt: new Date(),
+    });
+    await request(app).get(`/catalog/listings/${published._id}`).expect(200);
+
+    for (const status of ['draft', 'pending_review', 'archived', 'rejected'] as const) {
+      const listing = await Listing.create({ animal: animal._id, seller: owner._id, price: 1000, status });
+      await request(app).get(`/catalog/listings/${listing._id}`).expect(404);
+    }
+  });
   it('keeps Membership, Media, Revenue, Fiscal, AOE and Knowledge surfaces compatible', async () => {
     const user = await createTestUser('user');
     const admin = await createTestUser('admin');

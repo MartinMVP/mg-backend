@@ -9,7 +9,6 @@ import {
   listMessagesForParticipant,
   markConversationRead,
   sendMessage,
-  sendSystemMessage,
 } from '../../domain/messaging/messaging.service';
 
 const router = Router();
@@ -23,6 +22,7 @@ function handleMessagingError(res: any, error: unknown) {
   if (message === 'conversation_not_found') return res.status(404).json({ error: message });
   if (message === 'cannot_message_self') return res.status(400).json({ error: message });
   if (message === 'message_body_required') return res.status(400).json({ error: message });
+  if (message === 'system_message_forbidden') return res.status(403).json({ error: message });
   if (message === 'metadata_invalid') return res.status(400).json({ error: message });
   if (message === 'forbidden') return res.status(403).json({ error: message });
   if (message === 'conversation_daily_limit_reached') {
@@ -106,21 +106,12 @@ router.post('/conversations/:id/read', requireAuth, async (req, res, next) => {
 router.post('/conversations/:id/messages', requireAuth, async (req, res, next) => {
   try {
     const user = (req as any).user;
-    const isSystem = req.body?.type === 'system';
-    const message = isSystem
-      ? await sendSystemMessage({
-          conversationId: String(req.params.id),
-          actorId: user.sub,
-          source: req.body?.source || 'system',
-          body: String(req.body?.body || ''),
-          eventKey: req.body?.eventKey,
-          metadata: req.body?.metadata,
-        })
-      : await sendMessage({
-          conversationId: String(req.params.id),
-          senderId: user.sub,
-          body: String(req.body?.body || ''),
-        });
+    if (req.body?.type === 'system') throw Object.assign(new Error('system_message_forbidden'), { status: 403 });
+    const message = await sendMessage({
+      conversationId: String(req.params.id),
+      senderId: user.sub,
+      body: String(req.body?.body || ''),
+    });
 
     res.status(201).json(message);
   } catch (error) {

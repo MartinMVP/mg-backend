@@ -170,7 +170,7 @@ export async function getListing(req: Request, res: Response) {
   const doc = await Listing.findById(req.params.id)
     .populate({ path: 'animal', populate: ['breed', 'registry'] })
     .populate('media');
-  if (!doc) return res.status(404).json({ error: 'Not found' });
+  if (!doc || doc.status !== 'published') return res.status(404).json({ error: 'Not found' });
   res.json(doc);
 }
 
