@@ -8,8 +8,10 @@ import { resolveFiscalPlatformProvider } from './fiscalPlatformProvider';
 
 export const fiscalPlatformAuditActions = {
   fiscalOperationCreated: 'FISCAL_OPERATION_CREATED',
+  fiscalOperationDuplicateIgnored: 'FISCAL_OPERATION_DUPLICATE_IGNORED',
   invoiceStamped: 'INVOICE_STAMPED',
   invoiceDelivered: 'INVOICE_DELIVERED',
+  invoiceStampFailed: 'INVOICE_STAMP_FAILED',
   invoiceCancelRequested: 'INVOICE_CANCEL_REQUESTED',
   invoiceCancelled: 'INVOICE_CANCELLED',
   fiscalRecoveryExecuted: 'FISCAL_RECOVERY_EXECUTED',
@@ -75,48 +77,68 @@ export async function emitFiscalOperationInvoice(
   actor = 'system',
   options: { recovery?: boolean } = {},
 ) {
-  const provider = resolveFiscalPlatformProvider(operation.provider);
-  await transition(operation, 'pending_stamp', 'STAMP_REQUESTED', actor);
+  const lock = await FiscalOperation.findOneAndUpdate(
+    { _id: operation._id, invoiceStatus: { $in: ['created', 'failed'] } },
+    { $set: { invoiceStatus: 'pending_stamp', lastError: undefined, transientError: false } },
+    { new: false }
+  );
+  if (!lock) {
+    const current = await FiscalOperation.findById(operation._id);
+    if (!current) throw Object.assign(new Error('fiscal_operation_not_found'), { status: 404 });
+    return current;
+  }
 
-  const result = await provider.emitInvoice(operation, options);
+  const locked = await FiscalOperation.findById(operation._id);
+  if (!locked) throw Object.assign(new Error('fiscal_operation_not_found'), { status: 404 });
+  await history(locked as any, 'STAMP_REQUESTED', lock.invoiceStatus, 'pending_stamp', actor);
+
+  const provider = resolveFiscalPlatformProvider(locked.provider);
+
+  const result = await provider.emitInvoice(locked, options);
   if (!result.ok) {
-    operation.invoiceStatus = 'failed';
-    operation.providerMessage = result.message;
-    operation.lastError = result.message;
-    operation.transientError = Boolean(result.temporary);
-    await operation.save();
-    await history(operation, 'STAMP_FAILED', 'pending_stamp', 'failed', actor, {
+    locked.invoiceStatus = 'failed';
+    locked.providerMessage = result.message;
+    locked.lastError = result.message;
+    locked.transientError = Boolean(result.temporary);
+    await locked.save();
+    await history(locked as any, 'STAMP_FAILED', 'pending_stamp', 'failed', actor, {
       temporary: Boolean(result.temporary),
       definitive: Boolean(result.definitive),
     });
-    return operation;
+    await audit(actor, fiscalPlatformAuditActions.invoiceStampFailed, {
+      fiscalOperationId: String(locked._id),
+      commercialOperationId: String(locked.commercialOperationId),
+      temporary: Boolean(result.temporary),
+      definitive: Boolean(result.definitive),
+    });
+    return locked;
   }
 
-  operation.providerReference = result.providerReference;
-  operation.uuid = result.uuid;
-  operation.xmlLocation = result.xmlLocation || await provider.downloadXML(operation);
-  operation.pdfLocation = result.pdfLocation || await provider.downloadPDF(operation);
-  operation.providerMessage = result.message;
-  operation.lastError = undefined;
-  operation.transientError = false;
-  await operation.save();
-  await transition(operation, 'stamped', 'INVOICE_STAMPED', actor, { uuid: operation.uuid });
+  locked.providerReference = result.providerReference;
+  locked.uuid = result.uuid;
+  locked.xmlLocation = result.xmlLocation || await provider.downloadXML(locked);
+  locked.pdfLocation = result.pdfLocation || await provider.downloadPDF(locked);
+  locked.providerMessage = result.message;
+  locked.lastError = undefined;
+  locked.transientError = false;
+  await locked.save();
+  await transition(locked as any, 'stamped', 'INVOICE_STAMPED', actor, { uuid: locked.uuid });
   await audit(actor, fiscalPlatformAuditActions.invoiceStamped, {
-    fiscalOperationId: String(operation._id),
-    commercialOperationId: String(operation.commercialOperationId),
-    uuid: operation.uuid,
+    fiscalOperationId: String(locked._id),
+    commercialOperationId: String(locked.commercialOperationId),
+    uuid: locked.uuid,
   });
-  await transition(operation, 'delivery_pending', 'DELIVERY_PENDING', actor);
-  await transition(operation, 'delivered', 'INVOICE_DELIVERED', actor, {
-    xmlLocation: operation.xmlLocation,
-    pdfLocation: operation.pdfLocation,
+  await transition(locked as any, 'delivery_pending', 'DELIVERY_PENDING', actor);
+  await transition(locked as any, 'delivered', 'INVOICE_DELIVERED', actor, {
+    xmlLocation: locked.xmlLocation,
+    pdfLocation: locked.pdfLocation,
   });
   await audit(actor, fiscalPlatformAuditActions.invoiceDelivered, {
-    fiscalOperationId: String(operation._id),
-    commercialOperationId: String(operation.commercialOperationId),
+    fiscalOperationId: String(locked._id),
+    commercialOperationId: String(locked.commercialOperationId),
   });
 
-  return operation;
+  return locked;
 }
 
 export async function createFiscalOperation(input: {
@@ -132,17 +154,35 @@ export async function createFiscalOperation(input: {
   if (!commercialOperation) throw Object.assign(new Error('commercial_operation_not_found'), { status: 404 });
 
   const existing = await FiscalOperation.findOne({ commercialOperationId });
-  if (existing) return { status: 200, body: existing };
+  if (existing) {
+    await audit(input.actorId || 'system', fiscalPlatformAuditActions.fiscalOperationDuplicateIgnored, {
+      fiscalOperationId: String(existing._id),
+      commercialOperationId: String(commercialOperationId),
+    });
+    return { status: 200, body: existing };
+  }
 
-  const operation = await FiscalOperation.create({
-    operationId: settlement._id,
-    commercialOperationId,
-    invoiceStatus: 'created',
-    provider: input.provider || 'mock',
-    amount: settlement.amount,
-    currency: settlement.currency,
-    metadata: sanitizeMetadata(input.metadata),
-  });
+  let operation: IFiscalOperation & { _id: Types.ObjectId; save: () => Promise<any> };
+  try {
+    operation = await FiscalOperation.create({
+      operationId: settlement._id,
+      commercialOperationId,
+      invoiceStatus: 'created',
+      provider: input.provider || 'mock',
+      amount: settlement.amount,
+      currency: settlement.currency,
+      metadata: sanitizeMetadata(input.metadata),
+    }) as any;
+  } catch (error: any) {
+    if (error?.code !== 11000) throw error;
+    const duplicate = await FiscalOperation.findOne({ commercialOperationId });
+    if (!duplicate) throw error;
+    await audit(input.actorId || 'system', fiscalPlatformAuditActions.fiscalOperationDuplicateIgnored, {
+      fiscalOperationId: String(duplicate._id),
+      commercialOperationId: String(commercialOperationId),
+    });
+    return { status: 200, body: duplicate };
+  }
   await history(operation as any, 'FISCAL_OPERATION_CREATED', undefined, 'created', input.actorId || 'system');
   await audit(input.actorId || 'system', fiscalPlatformAuditActions.fiscalOperationCreated, {
     fiscalOperationId: String(operation._id),
@@ -232,8 +272,8 @@ export async function executeFiscalRecovery(actor = 'system') {
   const candidates = await FiscalOperation.find({ invoiceStatus: 'failed', transientError: true }).sort({ updatedAt: 1 }).limit(25);
   let recovered = 0;
   for (const operation of candidates) {
-    await emitFiscalOperationInvoice(operation as any, actor, { recovery: true });
-    if (operation.invoiceStatus === 'delivered') recovered += 1;
+    const emitted = await emitFiscalOperationInvoice(operation as any, actor, { recovery: true });
+    if (emitted.invoiceStatus === 'delivered') recovered += 1;
   }
   await audit(actor, fiscalPlatformAuditActions.fiscalRecoveryExecuted, { candidates: candidates.length, recovered });
   return { candidates: candidates.length, recovered };

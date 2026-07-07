@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import app from '../../app';
 import { Audit } from '../../domain/audit/audit.model';
 import { CommercialOperation } from '../../domain/payments/commercialOperation.model';
@@ -134,6 +134,30 @@ describe('Fiscal Platform 13.6', () => {
     expect(await FiscalOperation.countDocuments({ commercialOperationId: operation._id })).toBe(1);
   });
 
+  it('protects PaymentSettled retries and concurrent fiscal creation from duplicate CFDI emission', async () => {
+    const { token } = await userContext();
+    const operation = await settledCommercialOperation();
+    const emitSpy = vi.spyOn(MockFiscalPlatformProvider.prototype, 'emitInvoice');
+
+    try {
+      const responses = await Promise.all([
+        createFiscal(token, operation),
+        createFiscal(token, operation),
+        createFiscal(token, operation),
+      ]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 200, 201]);
+      expect(new Set(responses.map((response) => response.body._id)).size).toBe(1);
+      expect(await FiscalOperation.countDocuments({ commercialOperationId: operation._id })).toBe(1);
+      expect(await Audit.countDocuments({ action: fiscalPlatformAuditActions.invoiceStamped })).toBe(1);
+      expect(await Audit.countDocuments({ action: fiscalPlatformAuditActions.invoiceDelivered })).toBe(1);
+      expect(await Audit.countDocuments({ action: fiscalPlatformAuditActions.fiscalOperationDuplicateIgnored })).toBe(2);
+      expect(emitSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      emitSpy.mockRestore();
+    }
+  });
+
   it('records PAC rejection as failed and does not retry definitive fiscal errors automatically', async () => {
     const { token } = await userContext();
     const operation = await settledCommercialOperation();
@@ -189,6 +213,32 @@ describe('Fiscal Platform 13.6', () => {
     expect(recovery).toMatchObject({ candidates: 1, recovered: 1 });
     const recovered = await FiscalOperation.findOne({ commercialOperationId: operation._id }).lean();
     expect(recovered?.invoiceStatus).toBe('delivered');
+  });
+
+  it('reuses the failed FiscalOperation during concurrent recovery without duplicate CFDI emission', async () => {
+    const { token } = await userContext();
+    const operation = await settledCommercialOperation();
+    const emitSpy = vi.spyOn(MockFiscalPlatformProvider.prototype, 'emitInvoice');
+
+    try {
+      await createFiscal(token, operation, { forceTemporaryError: true }).expect(201);
+      expect(await FiscalOperation.countDocuments({ commercialOperationId: operation._id })).toBe(1);
+      emitSpy.mockClear();
+
+      await Promise.all([
+        executeFiscalRecovery('system'),
+        executeFiscalRecovery('system'),
+      ]);
+
+      const recovered = await FiscalOperation.findOne({ commercialOperationId: operation._id }).lean();
+      expect(recovered?.invoiceStatus).toBe('delivered');
+      expect(await FiscalOperation.countDocuments({ commercialOperationId: operation._id })).toBe(1);
+      expect(await Audit.countDocuments({ action: fiscalPlatformAuditActions.invoiceStamped })).toBe(1);
+      expect(await Audit.countDocuments({ action: fiscalPlatformAuditActions.invoiceDelivered })).toBe(1);
+      expect(emitSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      emitSpy.mockRestore();
+    }
   });
 
   it('keeps FiscalProvider abstract and exposes admin fiscal invoices without breaking adjacent domains', async () => {
