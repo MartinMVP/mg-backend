@@ -48,7 +48,7 @@ async function guaranteeActiveFreeMembership(userId: Types.ObjectId) {
   return membership;
 }
 
-function isPaidUpgrade(current: any, target: any) {
+export function isPaidUpgrade(current: any, target: any) {
   return target.price > 0 && target.price > current.price;
 }
 

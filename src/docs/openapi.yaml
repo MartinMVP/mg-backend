@@ -5,6 +5,75 @@ info:
 servers:
   - url: http://localhost:8080
 paths:
+  /membership/journey/recommend:
+    post:
+      tags: [Membership]
+      summary: Match requested capacity against current public benefits
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [listings, photos, prioritySupport]
+              properties:
+                listings: {type: integer, minimum: 0}
+                photos: {type: integer, minimum: 0}
+                prioritySupport: {type: boolean}
+      responses:
+        '200': {description: Matching plans; no ranking or commercial price assumptions}
+        '400': {description: Invalid requirements}
+  /account/membership/journey:
+    get:
+      tags: [Membership]
+      security: [{bearerAuth: []}]
+      summary: Current user's membership, capacity, available actions, publications and payments
+      description: Membership/usage use existing lazy Free assignment. Pending requests are separate from active membership. Payments include their real environment; no fiscal document is generated.
+      responses:
+        '200':
+          description: Owner-scoped journey snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [membership, plan, capacity, usage, actions, pendingMembership, publications, payments, capabilities]
+                properties:
+                  membership: {type: object}
+                  plan: {type: object, nullable: true}
+                  capacity: {type: object}
+                  usage: {type: object}
+                  actions: {type: object}
+                  pendingMembership: {type: object, nullable: true}
+                  publications: {type: array, items: {type: object}}
+                  payments: {type: array, items: {type: object}}
+                  capabilities: {type: object}
+        '401': {description: Authentication required or expired}
+  /account/membership/journey/change-preview:
+    get:
+      tags: [Membership]
+      security: [{bearerAuth: []}]
+      summary: Preview a public plan change without scheduling it
+      parameters:
+        - in: query
+          name: plan
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Target benefits, allowed flag, checkout requirement and effective date}
+        '401': {description: Authentication required}
+        '404': {description: Public active target plan not found}
+  /account/membership/catalog:
+    get:
+      tags: [Membership]
+      security: [{bearerAuth: []}]
+      summary: Owner-scoped animals and listings for first business value and draft recovery
+      parameters:
+        - in: query
+          name: page
+          schema: {type: integer, minimum: 1, default: 1}
+      responses:
+        '200': {description: animals, listings, page, pages; twenty results of each type per page}
+        '401': {description: Authentication required}
   /health:
     get:
       summary: Health check
@@ -410,9 +479,20 @@ paths:
 
   /membership/plans:
     get:
-      summary: List membership plans (admin/super)
-      security: [{ bearerAuth: [] }]
-      responses: { '200': { description: OK } }
+      tags: [Membership]
+      summary: CJ-02 public active plans and commercial capabilities
+      description: Returns only isPublic and isActive plans. MembershipPlan.benefits is authoritative. Does not expose provider identifiers or enable productive payments.
+      responses:
+        '200':
+          description: Public plans and capabilities; empty items is valid
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, capabilities]
+                properties:
+                  items: {type: array, items: {type: object}}
+                  capabilities: {type: object}
     post:
       summary: Create membership plan (admin/super)
       security: [{ bearerAuth: [] }]

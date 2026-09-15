@@ -5,7 +5,7 @@ import { requireRole } from '../middlewares/requireRole';
 import { getUserMembership } from '../../domain/memberships/membership.service';
 import { getMembershipCapacity } from '../../domain/memberships/membershipCatalogPolicy';
 import { requestMembershipPurchaseCheckout } from '../../domain/payments/membershipPurchase.service';
-import { MembershipPlan } from '../../domain/memberships/membershipPlan.model';
+import { getJourneyPlans } from '../../domain/memberships/membershipJourney.service';
 import { MembershipBenefit } from '../../domain/memberships/membershipBenefit.model';
 import { UserMembership } from '../../domain/memberships/userMembership.model';
 import { MembershipHistory } from '../../domain/memberships/membershipHistory.model';
@@ -59,8 +59,7 @@ function membershipChangeError(res: any, error: unknown) {
 
 
 router.get('/membership/plans', async (_req, res) => {
-  const plans = await MembershipPlan.find({ isActive: true }).sort({ sortOrder: 1, createdAt: -1 }).lean();
-  res.json({ items: plans });
+  res.json(await getJourneyPlans());
 });
 
 router.post('/membership/plans', requireAuth, requireMembershipAdmin, async (req, res) => {

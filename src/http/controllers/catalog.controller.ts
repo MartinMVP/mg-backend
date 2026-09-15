@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { listingPhotosAllowed } from '../../domain/memberships/membershipPhotoPolicy';
 import { Types } from 'mongoose';
 import { Animal } from '../../domain/animals/animal.model';
 import { Listing } from '../../domain/listings/listing.model';
@@ -190,6 +191,8 @@ export async function createListing(req: Request, res: Response) {
   const media = await validateOwnedMedia(mediaIdsFromBody(req.body), user.sub);
   if (!media.ok) return res.status(403).json({ error: media.reason });
 
+  if (!await listingPhotosAllowed(String(user.sub), media.ids.map(String))) return res.status(409).json({ error: 'membership_photo_limit_reached' });
+
   const payload = {
     animal: animal._id,
     seller: user.sub,
@@ -221,6 +224,7 @@ export async function updateListing(req: Request, res: Response) {
   if (updates.media) {
     const media = await validateOwnedMedia(mediaIdsFromBody(updates), user.sub);
     if (!media.ok) return res.status(403).json({ error: media.reason });
+    if (!await listingPhotosAllowed(String(doc.seller), media.ids.map(String))) return res.status(409).json({ error: 'membership_photo_limit_reached' });
     updates.media = media.ids;
   }
 
@@ -246,6 +250,8 @@ export async function publishListing(req: Request, res: Response) {
 
   const media = await validateOwnedMedia((doc.media || []).map((id) => String(id)), String(doc.seller));
   if (!media.ok) return res.status(403).json({ error: media.reason });
+
+  if (!await listingPhotosAllowed(String(doc.seller), (doc.media || []).map(String))) return res.status(409).json({ error: 'membership_photo_limit_reached' });
 
   const capacity = await consumeListingSlot(doc.seller);
   if (!capacity.consumed) return res.status(409).json({ error: 'membership_limit_reached', remaining: 0 });
